@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: picoarmy_db
+    restart: always
+    environment:
+      POSTGRES_DB: picoarmy
+      POSTGRES_USER: commander
+      POSTGRES_PASSWORD: stark_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-db:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    image: postgrest/postgrest
+    container_name: picoarmy_api
+    ports:
+      - "3000:3000"
+    environment:
+      PGRST_DB_URI: postgres://commander:stark_password@db:5432/picoarmy
+      PGRST_DB_SCHEMA: api
+      PGRST_DB_ANON_ROLE: web_anon
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
