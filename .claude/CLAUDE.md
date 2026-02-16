@@ -57,18 +57,25 @@ Volume: /data/
 ### Key Tables (api schema)
 | Table | Purpose |
 |-------|---------|
-| `api.bots` | Fleet registry — identity, status, heartbeat |
+| `api.bots` | Fleet registry — identity, status, heartbeat, client_id |
 | `api.updates` | Firmware versions with `is_latest` trigger |
 | `api.telemetry` | JSONB activity logs from bots |
+| `api.mcp_tool_calls` | MCP tool call audit log (bot, tool, args, result, duration) |
 | `api.latest_firmware` | View — current firmware for bot sync |
+| `api.get_client_id()` | Helper — extracts x-client-id from PostgREST request headers |
+
+### RLS (Row Level Security)
+Enabled on `bots`, `telemetry`, `mcp_tool_calls`. Policies use PostgREST 14's
+`request.headers` JSON GUC via `api.get_client_id()`:
+- **No x-client-id header** → Commander mode, sees all rows
+- **x-client-id: acme** → Client mode, sees only rows where `client_id = 'acme'`
+- DB owner (`commander` role) bypasses RLS automatically
 
 ### Planned Tables
 | Table | Purpose |
 |-------|---------|
 | `api.souls` | Versioned SOUL.md personalities |
 | `api.skills` | Modular skill packages |
-| `api.commands` | Task queue for bot commands |
-| `api.filesystem` | Virtual filesystem for bot configs |
 
 ## Tech Stack
 
@@ -77,8 +84,9 @@ Volume: /data/
 | Database | PostgreSQL 15 | The brain — all logic lives here |
 | Extensions | pg_net, pg_cron, uuid-ossp | Webhooks, scheduling, identity |
 | API | PostgREST | Auto-REST from schema, zero code |
-| Auth | JWT via PostgREST | Role-based: web_anon, bot_role, commander |
-| Control | TypeScript + ts-node | CLI fleet management |
+| Auth | JWT via PostgREST + RLS | Role-based: web_anon, commander |
+| Control | TypeScript + Express | Fleet management + dashboard server |
+| MCP | @modelcontextprotocol/sdk | Universal tool integration hub |
 | HTTP | axios | PostgREST client |
 | Config | dotenv | Environment management |
 | Agent | louisho5/picobot (Go) | The managed fleet units |
@@ -252,13 +260,16 @@ picoarmy/
 │   ├── CLAUDE.md          # This file
 │   └── PLAN.md            # Development roadmap
 ├── .env                   # Environment config (not committed)
-├── .env.example           # Template with all env vars
 ├── docker-compose.yml     # Dev: Postgres + PostgREST
+├── mcp-servers.json       # MCP server config (which servers, env vars, scopes)
 ├── init-db/
-│   └── 01-schema.sql      # Base schema + seed data
+│   ├── 01-schema.sql      # Base schema + seed data
+│   ├── 02-mcp-schema.sql  # client_id column + mcp_tool_calls table
+│   └── 03-rls.sql         # Row Level Security policies
 ├── src/
 │   ├── commander.ts       # Express server + API + SSE + static dashboard
 │   ├── process-manager.ts # Spawn/kill/monitor picobot child processes
+│   ├── mcp-hub.ts         # MCP client hub — connect, discover, scope, proxy
 │   ├── api-client.ts      # PostgREST client (axios + mock fallback)
 │   └── dashboard/         # Vite React app (command center UI)
 │       ├── src/
@@ -278,18 +289,22 @@ Runtime data (/data/ — not committed):
 ├── bots/
 │   ├── mom-helper/        # Per-bot workspace
 │   │   ├── config.json    # Picobot config (LLM, Telegram)
-│   │   └── workspace/     # SOUL.md, skills/, memory/
+│   │   └── workspace/     # SOUL.md, COMMANDS.md, HEARTBEAT.md, skills/, memory/
 │   └── seo-acme/
+├── pids/                  # PID files for zombie reaping
+│   ├── mom-helper.pid
+│   └── seo-acme.pid
 └── ...
 ```
 
 ## PostgREST Patterns
 
-- **Schema isolation**: `api` schema for public endpoints, `internal` for private logic
-- **JWT auth**: Bots authenticate with JWT containing `bot_id` claim
-- **RLS policies**: `bot_id = current_setting('request.jwt.claims')::json->>'bot_id'`
-- **pg_net triggers**: On soul/skill update → webhook to affected bots
-- **pg_cron health**: Every 60s mark bots as `offline` if no heartbeat in 5min
+- **Schema isolation**: `api` schema for public endpoints
+- **RLS via headers**: `api.get_client_id()` extracts `x-client-id` from `request.headers` JSON GUC
+- **No header = admin**: Commander calls PostgREST without `x-client-id` → sees all rows
+- **Client header = isolated**: Client apps send `x-client-id: acme` → RLS filters rows
+- **pg_net triggers**: On soul/skill update → webhook to affected bots (planned)
+- **pg_cron health**: Every 60s mark bots as `offline` if no heartbeat in 5min (planned)
 
 ## Picobot Deep Dive (v0.1.3-preview)
 
@@ -325,6 +340,23 @@ Picobot exposes **zero REST endpoints**. It has no webhook support, no registrat
 - **Outbound**: OpenAI-compatible API calls to LLM
 - **Internal**: Go channels between components
 
+### MCP Client Hub (mcp-hub.ts)
+
+Commander acts as the universal MCP client for the fleet. Bots don't connect to MCP servers directly — Commander proxies tool calls with scope enforcement.
+
+**Connected servers** (configured in `mcp-servers.json`):
+| Server | Transport | Tools | Scope |
+|--------|-----------|-------|-------|
+| Z.AI | stdio (npx) | 8 vision/web/GitHub tools | shared |
+| MiniMax | stdio (uvx) | 9 TTS/video/image/music tools | shared |
+
+**Scope guard**: Tools scoped `"shared"` are available to all bots. Tools scoped `"client:<id>"` are restricted to bots with matching `client_id`. Commander resolves `bot_name → client_id` and checks before proxying.
+
+**API endpoints**:
+- `GET /api/tools` — All tools (filtered by bot's client scope if `?bot=name`)
+- `POST /api/tools/:name/call` — Execute tool (body: `{arguments, bot_name}`)
+- `GET /api/mcp/status` — Connection status per server
+
 ### Fleet Control Plane (Direct Process Management)
 
 Since everything is in one container, NO sidecars or Docker API needed:
@@ -332,8 +364,12 @@ Since everything is in one container, NO sidecars or Docker API needed:
 1. **Direct filesystem writes** — Commander writes `SOUL.md`, `config.json`, skills to `/data/bots/{name}/`
 2. **Child process spawning** — `child_process.spawn('picobot', ['gateway'])` with per-bot env/cwd
 3. **Process health monitoring** — Commander watches PIDs, restarts crashed bots
-4. **Heartbeat.md as command channel** — Write instructions, bot processes on next tick (60s)
-5. **Memory reading** — Commander reads `/data/bots/{name}/workspace/memory/` for telemetry export
+4. **Separate IPC channels**:
+   - `HEARTBEAT.md` — Bot-owned. Bots write `TOOL_REQUEST` blocks, Commander reads and clears.
+   - `COMMANDS.md` — Commander-owned. Commander appends commands, bots read and clear.
+   - This separation prevents the race condition where `sendCommand` could overwrite pending tool requests.
+5. **PID persistence** — PIDs written to `data/pids/{name}.pid`. On Commander startup, `reapOrphans()` kills orphaned bot processes from a previous crash.
+6. **Memory reading** — Commander reads `/data/bots/{name}/workspace/memory/` for telemetry export
 
 ### Bot Lifecycle
 ```
