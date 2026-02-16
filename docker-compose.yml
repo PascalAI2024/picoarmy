@@ -1,31 +1,45 @@
-version: '3.8'
-
 services:
+  # ── Infrastructure ───────────────────────────────────────────
+
   db:
     image: postgres:15
-    container_name: picoarmy_db
     restart: always
     environment:
-      POSTGRES_DB: picoarmy
-      POSTGRES_USER: commander
-      POSTGRES_PASSWORD: stark_password
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-picoarmy}
+      POSTGRES_USER: ${POSTGRES_USER:-commander}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - ./init-db:/docker-entrypoint-initdb.d
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-commander} -d ${POSTGRES_DB:-picoarmy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - picoarmy_net
 
   api:
     image: postgrest/postgrest
-    container_name: picoarmy_api
+    restart: always
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_USER:-commander}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-picoarmy}
+      PGRST_DB_SCHEMAS: api
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-}
     ports:
       - "3000:3000"
-    environment:
-      PGRST_DB_URI: postgres://commander:stark_password@db:5432/picoarmy
-      PGRST_DB_SCHEMA: api
-      PGRST_DB_ANON_ROLE: web_anon
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    networks:
+      - picoarmy_net
 
 volumes:
   postgres_data:
+
+networks:
+  picoarmy_net:
+    name: picoarmy_net

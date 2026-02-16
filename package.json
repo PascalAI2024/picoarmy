@@ -1,0 +1,39 @@
+{
+  "name": "picoarmy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "PostgreSQL-first fleet management for louisho5/picobot",
+  "main": "src/commander.ts",
+  "scripts": {
+    "dev": "tsx src/commander.ts",
+    "start": "tsx src/commander.ts",
+    "build:dashboard": "cd src/dashboard && npm run build",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "setup": "docker compose up -d && cd src/dashboard && npm install"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ingenious-Digital-LLC/picoarmy.git"
+  },
+  "keywords": ["picobot", "fleet-management", "postgrest", "ai-agents"],
+  "author": "Ingenious Digital LLC",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Ingenious-Digital-LLC/picoarmy/issues"
+  },
+  "homepage": "https://github.com/Ingenious-Digital-LLC/picoarmy#readme",
+  "dependencies": {
+    "axios": "^1.13.5",
+    "dotenv": "^17.3.1",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^25.2.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

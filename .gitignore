@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+
+# Postgres data (local volume)
+postgres_data/
+
+# Logs
+*.log
+
+# Runtime data
+data/
+
+# Dashboard build output (rebuild from source)
+src/dashboard/dist/
+src/dashboard/node_modules/
