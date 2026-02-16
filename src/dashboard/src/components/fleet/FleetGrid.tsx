@@ -2,7 +2,6 @@ import { Plus } from 'lucide-react';
 import { BotCard } from './BotCard';
 import { useFleetStore } from '../../stores/fleet';
 import { useState } from 'react';
-import type { Bot } from '../../lib/types';
 
 interface FleetGridProps {
   onBotClick?: (botId: string) => void;

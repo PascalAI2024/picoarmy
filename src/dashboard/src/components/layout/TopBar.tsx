@@ -5,7 +5,13 @@ import { useFleetStore } from '../../stores/fleet';
 
 export function TopBar() {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const fleetStats = useFleetStore((state) => state.stats());
+  const bots = useFleetStore((state) => state.bots);
+  const fleetStats = {
+    online: bots.filter((b) => b.status === 'online').length,
+    idle: bots.filter((b) => b.status === 'idle').length,
+    offline: bots.filter((b) => b.status === 'offline').length,
+    total: bots.length,
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {

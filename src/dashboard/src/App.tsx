@@ -10,7 +10,7 @@ import { useFleetStore } from './stores/fleet';
 function App() {
   const [spawnDialogOpen, setSpawnDialogOpen] = useState(false);
   const { fetchFleet } = useFleet();
-  const { connected } = useSSE();
+  useSSE();
   const { selectBot, selectedBot: getSelectedBot } = useFleetStore();
 
   const selectedBot = getSelectedBot();
