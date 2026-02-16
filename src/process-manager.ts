@@ -120,6 +120,7 @@ export interface BotProcessInfo {
 const DATA_DIR = process.env.PICOARMY_DATA_DIR || path.join(process.cwd(), 'data');
 const BOTS_DIR = path.join(DATA_DIR, 'bots');
 const PICOBOT_BIN = process.env.PICOBOT_BIN || 'picobot';
+const PID_DIR = path.join(DATA_DIR, 'pids');
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_DELAY_MS = 5000;
 
@@ -140,10 +141,59 @@ export class ProcessManager extends EventEmitter {
     super();
     // Ensure data directories exist
     fs.mkdirSync(BOTS_DIR, { recursive: true });
+    fs.mkdirSync(PID_DIR, { recursive: true });
   }
 
   setMCPHub(hub: MCPHub): void {
     this.mcpHub = hub;
+  }
+
+  // ── PID Persistence & Zombie Reaping ──────────────────────────
+
+  private writePid(botName: string, pid: number): void {
+    fs.writeFileSync(path.join(PID_DIR, `${botName}.pid`), String(pid));
+  }
+
+  private clearPid(botName: string): void {
+    const pidFile = path.join(PID_DIR, `${botName}.pid`);
+    if (fs.existsSync(pidFile)) fs.unlinkSync(pidFile);
+  }
+
+  // Kill orphaned bot processes from a previous Commander session.
+  // Reads PID files, checks if processes are still alive, kills them.
+  reapOrphans(): void {
+    if (!fs.existsSync(PID_DIR)) return;
+
+    const pidFiles = fs.readdirSync(PID_DIR).filter(f => f.endsWith('.pid'));
+    for (const file of pidFiles) {
+      const botName = file.replace('.pid', '');
+      const pidStr = fs.readFileSync(path.join(PID_DIR, file), 'utf-8').trim();
+      const pid = parseInt(pidStr, 10);
+
+      if (isNaN(pid)) {
+        fs.unlinkSync(path.join(PID_DIR, file));
+        continue;
+      }
+
+      try {
+        // Signal 0 = check if process exists without killing
+        process.kill(pid, 0);
+        // Process is alive — kill it
+        console.log(`[PM] Reaping orphan "${botName}" (PID: ${pid})`);
+        try {
+          process.kill(pid, 'SIGTERM');
+          // Schedule SIGKILL as backup
+          setTimeout(() => {
+            try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+          }, 5000);
+        } catch { /* already dead */ }
+      } catch {
+        // Process is already dead — just clean up the PID file
+        console.log(`[PM] Cleaning stale PID file for "${botName}" (PID: ${pid})`);
+      }
+
+      fs.unlinkSync(path.join(PID_DIR, file));
+    }
   }
 
   // ── Spawn ────────────────────────────────────────────────────
@@ -242,6 +292,9 @@ export class ProcessManager extends EventEmitter {
       bot.status = 'online';
       bot.startedAt = new Date();
 
+      // Persist PID for zombie reaping on Commander restart
+      if (bot.pid) this.writePid(bot.name, bot.pid);
+
       console.log(`[PM] Started "${bot.name}" (PID: ${bot.pid})`);
 
       // Capture stdout/stderr for telemetry
@@ -272,6 +325,7 @@ export class ProcessManager extends EventEmitter {
         console.log(`[PM] "${bot.name}" exited (code: ${code}, signal: ${signal})`);
         bot.process = null;
         bot.pid = null;
+        this.clearPid(bot.name);
 
         if (code !== 0 && bot.status !== 'offline') {
           bot.status = 'crashed';
@@ -297,6 +351,7 @@ export class ProcessManager extends EventEmitter {
         bot.status = 'crashed';
         bot.process = null;
         bot.pid = null;
+        this.clearPid(bot.name);
         this.emit('bot:error', { botName: bot.name, error: err.message });
       });
     } catch (err) {
@@ -421,13 +476,16 @@ export class ProcessManager extends EventEmitter {
     this.emit('bot:skill-deployed', { botName, skillName });
   }
 
-  // Write to bot's HEARTBEAT.md (command channel)
+  // Write to bot's COMMANDS.md (commander → bot channel)
+  // Separated from HEARTBEAT.md (bot → commander channel) to prevent race conditions.
+  // HEARTBEAT.md is bot-owned: bots write tool requests, commander reads and clears them.
+  // COMMANDS.md is commander-owned: commander writes commands, bots read and clear them.
   sendCommand(botName: string, command: string): void {
     const bot = this.bots.get(botName);
     if (!bot) throw new Error(`Bot "${botName}" not found`);
 
-    const heartbeatPath = path.join(bot.config.workspaceDir, 'workspace', 'HEARTBEAT.md');
-    fs.writeFileSync(heartbeatPath, command);
+    const commandsPath = path.join(bot.config.workspaceDir, 'workspace', 'COMMANDS.md');
+    fs.appendFileSync(commandsPath, `\n${command}\n`);
     console.log(`[PM] Command sent to "${botName}"`);
   }
 

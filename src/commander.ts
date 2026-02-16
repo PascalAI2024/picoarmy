@@ -472,6 +472,9 @@ app.listen(PORT, () => {
   ╚═══════════════════════════════════════════════╝
   `);
 
+  // Reap orphaned bot processes from previous Commander session
+  processManager.reapOrphans();
+
   // Start health checks
   processManager.startHealthChecks();
 

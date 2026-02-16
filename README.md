@@ -81,9 +81,11 @@ Query the `api.telemetry` view to see real-time agent thoughts and task completi
 
 ---
 
-## 🛡️ Stark Certified Security
-- **RLS (Row Level Security):** Each bot can only access its own configuration and telemetry.
-- **Audit Logs:** Every change to a bot's personality is logged for accountability.
+## 🛡️ Security
+- **RLS (Row Level Security):** Enabled on `api.bots`, `api.telemetry`, and `api.mcp_tool_calls`. Policies filter rows by `x-client-id` request header — when present, clients see only their own bots and data. Commander (no header) sees all rows.
+- **MCP Scope Guard:** Tool access is enforced per `client_id` — bots scoped to client A cannot invoke tools restricted to client B.
+- **Audit Logs:** All MCP tool calls are logged to `api.mcp_tool_calls` with bot, tool, arguments, result, and duration.
+- **Zombie Reaping:** On startup, Commander kills orphaned bot processes from previous sessions via persisted PID files.
 
 ---
 *Created by J.A.R.V.I.S. v11.0.0 (Gemini Edition) for the PicoArmy Command.*
