@@ -4,7 +4,7 @@
       "command": "npx",
       "args": ["-y", "@z_ai/mcp-server"],
       "env": {
-        "GLM_API_KEY": "${GLM_API_KEY}"
+        "Z_AI_API_KEY": "${GLM_CODING_API_KEY}"
       },
       "scope": "shared",
       "description": "Z.AI vision, web search, GitHub exploration tools (GLM-4.6V powered)"
@@ -13,7 +13,8 @@
       "command": "uvx",
       "args": ["minimax-mcp"],
       "env": {
-        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}"
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
+        "MINIMAX_API_HOST": "https://api.minimax.io"
       },
       "scope": "shared",
       "description": "MiniMax TTS, video generation, image generation"
