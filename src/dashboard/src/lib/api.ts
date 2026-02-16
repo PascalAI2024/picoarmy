@@ -1,6 +1,6 @@
 // API client for Commander REST endpoints
 
-import type { Bot, CreateBotData, LogEntry, SoulTemplate } from './types';
+import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus } from './types';
 
 // Base URL for API (same origin in production, or from env in dev)
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -82,6 +82,36 @@ export async function deploySoul(
   });
 }
 
+// Provider API
+export async function fetchProviders(): Promise<ProviderPreset[]> {
+  return fetchJSON<ProviderPreset[]>('/api/providers');
+}
+
+// Tools API
+export async function fetchTools(botName?: string): Promise<MCPTool[]> {
+  const query = botName ? `?bot=${encodeURIComponent(botName)}` : '';
+  return fetchJSON<MCPTool[]>(`/api/tools${query}`);
+}
+
+export async function callTool(toolName: string, args: Record<string, unknown>, botName: string): Promise<unknown> {
+  return fetchJSON(`/api/tools/${encodeURIComponent(toolName)}/call`, {
+    method: 'POST',
+    body: JSON.stringify({ arguments: args, bot_name: botName }),
+  });
+}
+
+export async function fetchMCPStatus(): Promise<MCPHubStatus> {
+  return fetchJSON<MCPHubStatus>('/api/mcp/status');
+}
+
+// Settings API
+export async function updateBotSettings(id: string, settings: BotSettings): Promise<Bot> {
+  return fetchJSON<Bot>(`/api/fleet/${id}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(settings),
+  });
+}
+
 export default {
   fetchFleet,
   fetchBot,
@@ -90,4 +120,9 @@ export default {
   fetchBotLogs,
   fetchSouls,
   deploySoul,
+  fetchProviders,
+  fetchTools,
+  callTool,
+  fetchMCPStatus,
+  updateBotSettings,
 };

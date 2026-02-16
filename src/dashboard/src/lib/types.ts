@@ -11,6 +11,8 @@ export interface Bot {
   ttl_seconds: number | null;
   memory_mb?: number;
   uptime_seconds?: number;
+  client_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface LogEntry {
@@ -32,6 +34,43 @@ export interface CreateBotData {
 export interface SoulTemplate {
   name: string;
   description: string;
+}
+
+export interface ProviderPreset {
+  name: string;
+  model: string;
+  format: 'openai' | 'anthropic';
+  description: string;
+  configured: boolean;
+}
+
+export interface MCPTool {
+  name: string;
+  description: string;
+  server: string;
+  scope: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface BotSettings {
+  provider?: string;
+  model?: string;
+  client_id?: string;
+  telegram_token?: string;
+  telegram_allow_from?: string;
+  soul_name?: string;
+}
+
+export interface MCPHubStatus {
+  servers: Array<{
+    name: string;
+    status: string;
+    toolCount: number;
+    scope: string;
+    description: string;
+    error?: string;
+  }>;
+  totalTools: number;
 }
 
 // SSE Event types

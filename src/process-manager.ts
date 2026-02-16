@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
+import type { MCPHub } from './mcp-hub.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -29,6 +30,8 @@ export interface BotConfig {
   // Telegram config
   telegramBotToken: string;
   telegramAllowFrom: string;
+  // Client scoping (for MCP tool access)
+  clientId?: string;
   // Workspace
   workspaceDir: string;
 }
@@ -48,27 +51,27 @@ export function getProviderPresets(): ProviderPreset[] {
   const presets: ProviderPreset[] = [
     {
       name: 'minimax',
-      apiKey: process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY || '',
+      apiKey: process.env.MINIMAX_API_KEY || '',
       apiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
-      model: 'MiniMax-M2',
+      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
       format: 'openai',
-      description: 'MiniMax Regular API (pay-per-token, OpenAI format)',
+      description: 'MiniMax via OpenAI-compatible /v1 (coding plan key)',
     },
     {
-      name: 'minimax-coding',
-      apiKey: process.env.MINIMAX_CODING_API_KEY || '',
-      apiBase: process.env.MINIMAX_CODING_API_BASE || 'https://api.minimax.io/anthropic',
-      model: process.env.MINIMAX_CODING_MODEL || 'MiniMax-M2.1',
+      name: 'minimax-anthropic',
+      apiKey: process.env.MINIMAX_API_KEY || '',
+      apiBase: process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic',
+      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
       format: 'anthropic',
-      description: 'MiniMax Coding Plan (prompt-quota, Anthropic format)',
+      description: 'MiniMax via Anthropic-compatible /anthropic (same key)',
     },
     {
       name: 'glm',
       apiKey: process.env.GLM_API_KEY || '',
-      apiBase: process.env.GLM_API_BASE || 'https://open.bigmodel.cn/api/paas/v4',
+      apiBase: process.env.GLM_API_BASE || 'https://api.z.ai/api/paas/v4',
       model: 'glm-4.7',
       format: 'openai',
-      description: 'Zhipu GLM Regular API (pay-per-token)',
+      description: 'Zhipu GLM-4.7 (regular API key)',
     },
     {
       name: 'glm-coding',
@@ -76,15 +79,15 @@ export function getProviderPresets(): ProviderPreset[] {
       apiBase: process.env.GLM_CODING_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
       model: process.env.GLM_CODING_MODEL || 'glm-4.7',
       format: 'openai',
-      description: 'Zhipu GLM Coding Plan (prompt-quota, OpenAI format)',
+      description: 'Zhipu GLM-4.7 via coding plan (prompt-quota)',
     },
     {
       name: 'glm-flash',
-      apiKey: process.env.GLM_API_KEY || '',
-      apiBase: process.env.GLM_API_BASE || 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: process.env.GLM_CODING_API_KEY || process.env.GLM_API_KEY || '',
+      apiBase: process.env.GLM_CODING_API_BASE || process.env.GLM_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
       model: 'glm-4.7-flash',
       format: 'openai',
-      description: 'Zhipu GLM-4.7-Flash (FREE, unlimited, no quota)',
+      description: 'Zhipu GLM-4.7-Flash (FREE, unlimited)',
     },
   ];
   return presets.filter(p => p.apiKey); // Only return presets with configured keys
@@ -120,15 +123,27 @@ const PICOBOT_BIN = process.env.PICOBOT_BIN || 'picobot';
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_DELAY_MS = 5000;
 
+export interface ToolRequest {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  requestId: string;
+}
+
 export class ProcessManager extends EventEmitter {
   private bots: Map<string, BotProcess> = new Map();
   private ttlTimers: Map<string, NodeJS.Timeout> = new Map();
   private healthCheckInterval: NodeJS.Timeout | null = null;
+  private toolPollInterval: NodeJS.Timeout | null = null;
+  private mcpHub: MCPHub | null = null;
 
   constructor() {
     super();
     // Ensure data directories exist
     fs.mkdirSync(BOTS_DIR, { recursive: true });
+  }
+
+  setMCPHub(hub: MCPHub): void {
+    this.mcpHub = hub;
   }
 
   // ── Spawn ────────────────────────────────────────────────────
@@ -442,6 +457,116 @@ export class ProcessManager extends EventEmitter {
     }, intervalMs);
   }
 
+  // ── Tool Request Polling ─────────────────────────────────────
+
+  startToolPolling(intervalMs: number = 10000): void {
+    if (!this.mcpHub) {
+      console.log('[PM] No MCP hub set — tool polling disabled');
+      return;
+    }
+
+    this.toolPollInterval = setInterval(() => this.pollToolRequests(), intervalMs);
+    console.log(`[PM] Tool request polling started (${intervalMs}ms interval)`);
+  }
+
+  private async pollToolRequests(): Promise<void> {
+    if (!this.mcpHub) return;
+
+    for (const bot of this.bots.values()) {
+      if (bot.status !== 'online') continue;
+
+      const heartbeatPath = path.join(bot.config.workspaceDir, 'workspace', 'HEARTBEAT.md');
+      if (!fs.existsSync(heartbeatPath)) continue;
+
+      try {
+        const content = fs.readFileSync(heartbeatPath, 'utf-8');
+        const requests = this.parseToolRequests(content);
+
+        if (requests.length === 0) continue;
+
+        // Process each tool request
+        for (const req of requests) {
+          try {
+            const callParams: { toolName: string; arguments: Record<string, unknown>; botName: string; clientId?: string } = {
+              toolName: req.toolName,
+              arguments: req.arguments,
+              botName: bot.name,
+            };
+            if (bot.config.clientId) callParams.clientId = bot.config.clientId;
+
+            const result = await this.mcpHub.callTool(callParams);
+
+            // Write result to bot workspace
+            const resultPath = path.join(
+              bot.config.workspaceDir, 'workspace',
+              `TOOL_RESULT_${req.requestId}.json`
+            );
+            fs.writeFileSync(resultPath, JSON.stringify({
+              requestId: req.requestId,
+              toolName: req.toolName,
+              result: result.content,
+              isError: result.isError,
+              timestamp: new Date().toISOString(),
+            }, null, 2));
+
+            this.emit('bot:tool-result', {
+              botName: bot.name,
+              toolName: req.toolName,
+              requestId: req.requestId,
+              isError: result.isError,
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const resultPath = path.join(
+              bot.config.workspaceDir, 'workspace',
+              `TOOL_RESULT_${req.requestId}.json`
+            );
+            fs.writeFileSync(resultPath, JSON.stringify({
+              requestId: req.requestId,
+              toolName: req.toolName,
+              error: message,
+              isError: true,
+              timestamp: new Date().toISOString(),
+            }, null, 2));
+          }
+        }
+
+        // Clear processed requests from HEARTBEAT.md
+        const cleaned = this.removeToolRequests(content);
+        fs.writeFileSync(heartbeatPath, cleaned);
+      } catch {
+        // Ignore read errors — file may be locked by bot
+      }
+    }
+  }
+
+  parseToolRequests(content: string): ToolRequest[] {
+    const requests: ToolRequest[] = [];
+    const regex = /---\s*\nTOOL_REQUEST:\s*(\S+)\s*\nARGUMENTS:\s*(.+)\s*\nREQUEST_ID:\s*(\S+)\s*\n---/g;
+
+    let match;
+    while ((match = regex.exec(content)) !== null) {
+      try {
+        requests.push({
+          toolName: match[1]!,
+          arguments: JSON.parse(match[2]!),
+          requestId: match[3]!,
+        });
+      } catch {
+        // Skip malformed requests
+      }
+    }
+
+    return requests;
+  }
+
+  private removeToolRequests(content: string): string {
+    return content.replace(
+      /---\s*\nTOOL_REQUEST:\s*\S+\s*\nARGUMENTS:\s*.+\s*\nREQUEST_ID:\s*\S+\s*\n---/g,
+      ''
+    ).trim();
+  }
+
   // ── Shutdown ─────────────────────────────────────────────────
 
   async shutdown(): Promise<void> {
@@ -449,6 +574,10 @@ export class ProcessManager extends EventEmitter {
 
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
+    }
+
+    if (this.toolPollInterval) {
+      clearInterval(this.toolPollInterval);
     }
 
     // Clear all TTL timers

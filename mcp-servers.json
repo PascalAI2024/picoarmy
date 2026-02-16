@@ -1,0 +1,26 @@
+{
+  "servers": {
+    "z-ai": {
+      "command": "npx",
+      "args": ["-y", "@z_ai/mcp-server"],
+      "env": {
+        "GLM_API_KEY": "${GLM_API_KEY}"
+      },
+      "scope": "shared",
+      "description": "Z.AI vision, web search, GitHub exploration tools (GLM-4.6V powered)"
+    },
+    "minimax": {
+      "command": "uvx",
+      "args": ["minimax-mcp"],
+      "env": {
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}"
+      },
+      "scope": "shared",
+      "description": "MiniMax TTS, video generation, image generation"
+    }
+  },
+  "scoping": {
+    "shared": "All bots can use — stateless tools with no client-specific data access",
+    "client:<id>": "Only bots with matching client_id — tools that access client resources"
+  }
+}

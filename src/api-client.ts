@@ -25,6 +25,8 @@ export interface Bot {
   created_at: string;
   is_permanent: boolean;
   ttl_seconds: number | null;
+  client_id?: string;
+  metadata?: Record<string, unknown>;
   memory_mb?: number;
   uptime_seconds?: number;
 }
@@ -43,6 +45,7 @@ export interface CreateBotData {
   soul_name: string;
   is_permanent: boolean;
   ttl_seconds?: number;
+  client_id?: string;
 }
 
 // Mock data for development without PostgREST
@@ -151,6 +154,18 @@ export async function createBot(data: CreateBotData): Promise<Bot> {
   }
 }
 
+export async function updateBot(id: string, data: Partial<Pick<Bot, 'soul_name' | 'client_id' | 'metadata'>>): Promise<Bot | null> {
+  try {
+    const response = await apiClient.patch(`/bots?id=eq.${id}`, data, {
+      headers: { Prefer: 'return=representation' },
+    });
+    return response.data.length > 0 ? enrichBot(response.data[0]) : null;
+  } catch (error) {
+    console.warn('PostgREST unavailable, update ignored:', error);
+    return null;
+  }
+}
+
 export async function deleteBot(id: string): Promise<void> {
   try {
     await apiClient.delete(`/bots?id=eq.${id}`);
@@ -197,6 +212,7 @@ export default {
   getBots,
   getBot,
   createBot,
+  updateBot,
   deleteBot,
   getTelemetry,
 };
