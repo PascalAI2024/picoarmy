@@ -1,18 +1,29 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Shell } from './components/layout/Shell';
 import { FleetGrid } from './components/fleet/FleetGrid';
 import { SpawnDialog } from './components/fleet/SpawnDialog';
 import { BotDetail } from './components/fleet/BotDetail';
-import { mockBots } from './lib/mock-data';
+import { useFleet } from './hooks/useFleet';
+import { useSSE } from './hooks/useSSE';
+import { useFleetStore } from './stores/fleet';
 
 function App() {
   const [spawnDialogOpen, setSpawnDialogOpen] = useState(false);
-  const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
+  const { fetchFleet } = useFleet();
+  const { connected } = useSSE();
+  const { selectBot, selectedBot: getSelectedBot } = useFleetStore();
 
-  const selectedBot = mockBots.find(b => b.id === selectedBotId);
+  const selectedBot = getSelectedBot();
+
+  // Fetch initial fleet data on mount
+  useEffect(() => {
+    fetchFleet().catch((err) => {
+      console.error('Failed to load fleet:', err);
+    });
+  }, [fetchFleet]);
 
   return (
-    <Shell>
+    <Shell onSpawnClick={() => setSpawnDialogOpen(true)}>
       <div className="space-y-6">
         {/* Fleet Grid */}
         {!selectedBot && (
@@ -24,7 +35,7 @@ function App() {
             </div>
 
             <FleetGrid
-              onBotClick={(botId) => setSelectedBotId(botId)}
+              onBotClick={(botId) => selectBot(botId)}
               onSpawnClick={() => setSpawnDialogOpen(true)}
             />
           </>
@@ -34,7 +45,7 @@ function App() {
         {selectedBot && (
           <>
             <button
-              onClick={() => setSelectedBotId(null)}
+              onClick={() => selectBot(null)}
               className="text-sm text-accent-cyan hover:text-accent-cyan/80"
             >
               ← Back to Fleet
@@ -44,7 +55,7 @@ function App() {
               bot={selectedBot}
               onDestroy={() => {
                 console.log('Destroy bot:', selectedBot.id);
-                setSelectedBotId(null);
+                selectBot(null);
               }}
               onRestart={() => {
                 console.log('Restart bot:', selectedBot.id);

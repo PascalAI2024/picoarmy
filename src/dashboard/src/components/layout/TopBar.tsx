@@ -1,16 +1,11 @@
 import { Command } from 'lucide-react';
 import { StatusLED } from '../ui/StatusLED';
 import { useEffect, useState } from 'react';
-
-// Mock fleet stats - will be replaced with real data from Zustand
-const mockFleetStats = {
-  online: 2,
-  idle: 1,
-  offline: 0,
-};
+import { useFleetStore } from '../../stores/fleet';
 
 export function TopBar() {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const fleetStats = useFleetStore((state) => state.stats());
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -37,7 +32,7 @@ export function TopBar() {
           <div className="flex items-center gap-2">
             <StatusLED status="online" size="sm" />
             <span className="mono-data text-sm">
-              <span className="text-status-online font-medium">{mockFleetStats.online}</span>
+              <span className="text-status-online font-medium">{fleetStats.online}</span>
               <span className="text-text-muted ml-1">online</span>
             </span>
           </div>
@@ -45,7 +40,7 @@ export function TopBar() {
           <div className="flex items-center gap-2">
             <StatusLED status="idle" size="sm" />
             <span className="mono-data text-sm">
-              <span className="text-status-idle font-medium">{mockFleetStats.idle}</span>
+              <span className="text-status-idle font-medium">{fleetStats.idle}</span>
               <span className="text-text-muted ml-1">idle</span>
             </span>
           </div>
@@ -53,7 +48,7 @@ export function TopBar() {
           <div className="flex items-center gap-2">
             <StatusLED status="offline" size="sm" />
             <span className="mono-data text-sm">
-              <span className="text-status-offline font-medium">{mockFleetStats.offline}</span>
+              <span className="text-status-offline font-medium">{fleetStats.offline}</span>
               <span className="text-text-muted ml-1">offline</span>
             </span>
           </div>

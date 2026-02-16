@@ -1,5 +1,6 @@
 import { Database, Grid3x3, Cpu, ScrollText, Plus } from 'lucide-react';
 import { StatusLED } from '../ui/StatusLED';
+import { useFleetStore } from '../../stores/fleet';
 
 const navItems = [
   { label: 'Fleet', icon: Grid3x3, href: '/' },
@@ -8,14 +9,12 @@ const navItems = [
   { label: 'Logs', icon: ScrollText, href: '/logs' },
 ];
 
-// Mock bot data - will be replaced with real data from Zustand
-const mockBots = [
-  { id: 1, name: 'mom-helper', status: 'online' as const },
-  { id: 2, name: 'seo-acme', status: 'online' as const },
-  { id: 3, name: 'support-bot', status: 'idle' as const },
-];
+interface SidebarProps {
+  onSpawnClick?: () => void;
+}
 
-export function Sidebar() {
+export function Sidebar({ onSpawnClick }: SidebarProps) {
+  const { bots, selectBot } = useFleetStore();
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 bg-bg-surface border-r border-border flex flex-col">
       {/* Branding */}
@@ -33,9 +32,10 @@ export function Sidebar() {
             Fleet
           </h2>
           <div className="space-y-1">
-            {mockBots.map((bot) => (
+            {bots.map((bot) => (
               <button
                 key={bot.id}
+                onClick={() => selectBot(bot.id)}
                 className="
                   w-full flex items-center gap-2
                   px-3 py-2 rounded-sm
@@ -82,15 +82,18 @@ export function Sidebar() {
 
       {/* Spawn button */}
       <div className="p-4 border-t border-border">
-        <button className="
-          w-full flex items-center justify-center gap-2
-          px-4 py-3
-          bg-accent-cyan/10 hover:bg-accent-cyan/20
-          border border-accent-cyan/30 hover:border-accent-cyan/50
-          text-accent-cyan
-          transition-all
-          glow-cyan
-        ">
+        <button
+          onClick={onSpawnClick}
+          className="
+            w-full flex items-center justify-center gap-2
+            px-4 py-3
+            bg-accent-cyan/10 hover:bg-accent-cyan/20
+            border border-accent-cyan/30 hover:border-accent-cyan/50
+            text-accent-cyan
+            transition-all
+            glow-cyan
+          "
+        >
           <Plus className="h-4 w-4" />
           <span className="font-medium text-sm">Spawn Bot</span>
         </button>

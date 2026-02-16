@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/Select';
-import { mockSoulTemplates } from '../../lib/mock-data';
+import { useFleet } from '../../hooks/useFleet';
+import type { SoulTemplate } from '../../lib/types';
 
 interface SpawnDialogProps {
   open: boolean;
@@ -26,17 +27,45 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
   const [soul, setSoul] = useState('');
   const [type, setType] = useState<'permanent' | 'ephemeral'>('ephemeral');
   const [ttl, setTtl] = useState('2');
+  const [souls, setSouls] = useState<SoulTemplate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const { spawnBot, fetchSouls } = useFleet();
 
-  const handleDeploy = () => {
-    // TODO: POST to /api/fleet
-    console.log('Deploy bot:', { name, soul, type, ttl: type === 'ephemeral' ? ttl : null });
-    onOpenChange(false);
+  // Fetch available souls on mount
+  useEffect(() => {
+    if (open) {
+      fetchSouls()
+        .then(setSouls)
+        .catch((err) => {
+          console.error('Failed to load souls:', err);
+        });
+    }
+  }, [open, fetchSouls]);
 
-    // Reset form
-    setName('');
-    setSoul('');
-    setType('ephemeral');
-    setTtl('2');
+  const handleDeploy = async () => {
+    if (!name || !soul) return;
+
+    setLoading(true);
+    try {
+      await spawnBot({
+        name,
+        soul_name: soul,
+        is_permanent: type === 'permanent',
+        ttl_seconds: type === 'ephemeral' ? parseInt(ttl) * 3600 : undefined,
+      });
+
+      // Close dialog and reset form
+      onOpenChange(false);
+      setName('');
+      setSoul('');
+      setType('ephemeral');
+      setTtl('2');
+    } catch (err) {
+      console.error('Failed to spawn bot:', err);
+      alert('Failed to spawn bot. Check console for details.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -86,9 +115,9 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
                 <SelectValue placeholder="Select a soul..." />
               </SelectTrigger>
               <SelectContent>
-                {mockSoulTemplates.map((template) => (
-                  <SelectItem key={template} value={template}>
-                    {template}
+                {souls.map((template) => (
+                  <SelectItem key={template.name} value={template.name}>
+                    {template.name} - {template.description}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -173,7 +202,7 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
           </button>
           <button
             onClick={handleDeploy}
-            disabled={!name || !soul}
+            disabled={!name || !soul || loading}
             className="
               px-6 py-2 text-sm font-medium
               bg-accent-cyan/20 border border-accent-cyan
@@ -183,7 +212,7 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
               transition-all
             "
           >
-            DEPLOY
+            {loading ? 'DEPLOYING...' : 'DEPLOY'}
           </button>
         </DialogFooter>
       </DialogContent>

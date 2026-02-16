@@ -1,5 +1,6 @@
 import { StatusLED } from '../ui/StatusLED';
-import type { Bot } from '../../lib/mock-data';
+import type { Bot } from '../../lib/types';
+import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
 
 interface BotCardProps {
   bot: Bot;
@@ -42,7 +43,7 @@ export function BotCard({ bot, onClick }: BotCardProps) {
             {bot.name}
           </h3>
           <p className="text-xs text-text-secondary">
-            {bot.soul}
+            {bot.soul_name}
           </p>
         </div>
 
@@ -62,11 +63,10 @@ export function BotCard({ bot, onClick }: BotCardProps) {
           bg-bg-elevated border border-border
           text-xs text-text-muted
         ">
-          {bot.type === 'ephemeral' && bot.ttl && (
-            <span className="text-status-idle">⏱ {bot.ttl}</span>
-          )}
-          {bot.type === 'permanent' && (
+          {bot.is_permanent ? (
             <span>∞ permanent</span>
+          ) : (
+            <span className="text-status-idle">⏱ {formatTTL(bot.ttl_seconds)}</span>
           )}
         </span>
       </div>
@@ -78,7 +78,7 @@ export function BotCard({ bot, onClick }: BotCardProps) {
             Uptime
           </div>
           <div className="mono-data text-xs text-text-primary">
-            {bot.uptime}
+            {formatUptime(bot.uptime_seconds)}
           </div>
         </div>
 
@@ -87,7 +87,7 @@ export function BotCard({ bot, onClick }: BotCardProps) {
             Memory
           </div>
           <div className="mono-data text-xs text-text-primary">
-            {bot.memory}
+            {formatMemory(bot.memory_mb)}
           </div>
         </div>
 
@@ -96,7 +96,7 @@ export function BotCard({ bot, onClick }: BotCardProps) {
             Last HB
           </div>
           <div className="mono-data text-xs text-text-primary">
-            {bot.lastHeartbeat}
+            {formatRelativeTime(bot.last_heartbeat)}
           </div>
         </div>
       </div>

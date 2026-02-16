@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
 import { StatusLED } from '../ui/StatusLED';
-import type { Bot } from '../../lib/mock-data';
-import type { ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
+import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
 import { fetchProviders, fetchTools, updateBotSettings, fetchSouls } from '../../lib/api';
+import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
 
 interface BotDetailProps {
   bot: Bot;
@@ -15,7 +15,11 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
   const [providers, setProviders] = useState<ProviderPreset[]>([]);
   const [tools, setTools] = useState<MCPTool[]>([]);
   const [souls, setSouls] = useState<SoulTemplate[]>([]);
-  const [settings, setSettings] = useState<BotSettings>({});
+  const [settings, setSettings] = useState<BotSettings>({
+    soul_name: bot.soul_name,
+    client_id: bot.client_id,
+    provider: (bot.metadata?.provider as string) || undefined,
+  });
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [loadingTools, setLoadingTools] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -94,16 +98,15 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
               bg-bg-elevated border border-border
               text-xs text-text-muted
             ">
-              {bot.type === 'ephemeral' && bot.ttl && (
-                <span className="text-status-idle">⏱ TTL: {bot.ttl}</span>
-              )}
-              {bot.type === 'permanent' && (
+              {bot.is_permanent ? (
                 <span>∞ permanent</span>
+              ) : (
+                <span className="text-status-idle">⏱ TTL: {formatTTL(bot.ttl_seconds)}</span>
               )}
             </span>
 
             <span className="mono-data text-sm text-text-secondary">
-              {bot.soul}
+              {bot.soul_name}
             </span>
           </div>
         </div>
@@ -137,16 +140,16 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                 Uptime
               </div>
               <div className="mono-data text-lg text-text-primary">
-                {bot.uptime}
+                {formatUptime(bot.uptime_seconds)}
               </div>
             </div>
 
             <div className="panel">
               <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
-                Process ID
+                Bot ID
               </div>
-              <div className="mono-data text-lg text-text-primary">
-                {bot.pid || 'N/A'}
+              <div className="mono-data text-sm text-text-primary break-all">
+                {bot.id}
               </div>
             </div>
 
@@ -155,7 +158,7 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                 Memory Usage
               </div>
               <div className="mono-data text-lg text-text-primary">
-                {bot.memory}
+                {formatMemory(bot.memory_mb)}
               </div>
             </div>
 
@@ -164,7 +167,7 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                 Last Heartbeat
               </div>
               <div className="mono-data text-lg text-text-primary">
-                {bot.lastHeartbeat}
+                {formatRelativeTime(bot.last_heartbeat)}
               </div>
             </div>
 
@@ -173,7 +176,16 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                 Bot Type
               </div>
               <div className="mono-data text-lg text-text-primary capitalize">
-                {bot.type}
+                {bot.is_permanent ? 'permanent' : 'ephemeral'}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
+                Created At
+              </div>
+              <div className="mono-data text-sm text-text-primary">
+                {formatRelativeTime(bot.created_at)}
               </div>
             </div>
           </div>
@@ -182,8 +194,8 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
         <TabsContent value="soul" className="space-y-4">
           <div className="panel">
             <div className="mono-data text-sm text-text-secondary space-y-4">
-              <p># {bot.soul.toUpperCase()} SOUL</p>
-              <p>You are a helpful AI assistant specialized in {bot.soul} tasks.</p>
+              <p># {bot.soul_name.toUpperCase()} SOUL</p>
+              <p>You are a helpful AI assistant specialized in {bot.soul_name} tasks.</p>
               <p>Your primary goal is to assist users effectively and efficiently.</p>
               <p className="text-text-muted italic">
                 // This is mock SOUL.md content. In production, this will be fetched from the bot's workspace.

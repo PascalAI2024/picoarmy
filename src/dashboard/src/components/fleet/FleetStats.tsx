@@ -1,12 +1,13 @@
 import { StatusLED } from '../ui/StatusLED';
-import { mockBots } from '../../lib/mock-data';
+import { useFleetStore } from '../../stores/fleet';
 
 export function FleetStats() {
+  const { bots } = useFleetStore();
   const stats = {
-    online: mockBots.filter(b => b.status === 'online').length,
-    idle: mockBots.filter(b => b.status === 'idle').length,
-    offline: mockBots.filter(b => b.status === 'offline').length,
-    spawning: mockBots.filter(b => b.status === 'spawning').length,
+    online: bots.filter(b => b.status === 'online').length,
+    idle: bots.filter(b => b.status === 'idle').length,
+    offline: bots.filter(b => b.status === 'offline').length,
+    spawning: bots.filter(b => b.status === 'spawning').length,
   };
 
   return (

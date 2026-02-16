@@ -3,13 +3,14 @@ import { TopBar } from './TopBar';
 
 interface ShellProps {
   children: React.ReactNode;
+  onSpawnClick?: () => void;
 }
 
-export function Shell({ children }: ShellProps) {
+export function Shell({ children, onSpawnClick }: ShellProps) {
   return (
     <div className="min-h-screen bg-bg flex">
       {/* Fixed sidebar */}
-      <Sidebar />
+      <Sidebar onSpawnClick={onSpawnClick} />
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col ml-60">

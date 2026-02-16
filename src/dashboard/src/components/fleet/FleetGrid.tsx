@@ -1,7 +1,8 @@
 import { Plus } from 'lucide-react';
 import { BotCard } from './BotCard';
-import { mockBots } from '../../lib/mock-data';
+import { useFleetStore } from '../../stores/fleet';
 import { useState } from 'react';
+import type { Bot } from '../../lib/types';
 
 interface FleetGridProps {
   onBotClick?: (botId: string) => void;
@@ -9,17 +10,17 @@ interface FleetGridProps {
 }
 
 export function FleetGrid({ onBotClick, onSpawnClick }: FleetGridProps) {
-  const [filter, setFilter] = useState<'all' | 'online' | 'idle' | 'offline'>('all');
-  const [sortBy, setSortBy] = useState<'name' | 'status' | 'type'>('name');
+  const { filteredBots: getFilteredBots, filter, setFilter } = useFleetStore();
+  const [sortBy, setSortBy] = useState<'name' | 'status' | 'permanent'>('name');
 
-  const filteredBots = mockBots
-    .filter((bot) => filter === 'all' || bot.status === filter)
-    .sort((a, b) => {
-      if (sortBy === 'name') return a.name.localeCompare(b.name);
-      if (sortBy === 'status') return a.status.localeCompare(b.status);
-      if (sortBy === 'type') return a.type.localeCompare(b.type);
-      return 0;
-    });
+  const displayBots = getFilteredBots().sort((a, b) => {
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'status') return a.status.localeCompare(b.status);
+    if (sortBy === 'permanent') {
+      return a.is_permanent === b.is_permanent ? 0 : a.is_permanent ? -1 : 1;
+    }
+    return 0;
+  });
 
   return (
     <div className="space-y-6">
@@ -51,7 +52,7 @@ export function FleetGrid({ onBotClick, onSpawnClick }: FleetGridProps) {
         <div className="flex items-center gap-2">
           <span className="text-sm text-text-muted">Sort:</span>
           <div className="flex gap-1">
-            {(['name', 'status', 'type'] as const).map((s) => (
+            {(['name', 'status', 'permanent'] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSortBy(s)}
@@ -72,13 +73,13 @@ export function FleetGrid({ onBotClick, onSpawnClick }: FleetGridProps) {
         </div>
 
         <div className="ml-auto mono-data text-sm text-text-muted">
-          {filteredBots.length} bot{filteredBots.length !== 1 ? 's' : ''}
+          {displayBots.length} bot{displayBots.length !== 1 ? 's' : ''}
         </div>
       </div>
 
       {/* Grid */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
-        {filteredBots.map((bot) => (
+        {displayBots.map((bot) => (
           <BotCard
             key={bot.id}
             bot={bot}
