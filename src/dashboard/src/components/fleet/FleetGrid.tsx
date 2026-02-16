@@ -77,42 +77,74 @@ export function FleetGrid({ onBotClick, onSpawnClick }: FleetGridProps) {
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
-        {displayBots.map((bot) => (
-          <BotCard
-            key={bot.id}
-            bot={bot}
-            onClick={() => onBotClick?.(bot.id)}
-          />
-        ))}
-
-        {/* Spawn bot tile */}
-        <button
-          onClick={onSpawnClick}
-          className="
-            group
-            min-h-[200px]
-            bg-bg-surface/50 border-2 border-dashed border-border
-            hover:border-accent-cyan hover:bg-accent-cyan/5
-            transition-all duration-200
-            flex flex-col items-center justify-center gap-3
-            focus:outline-none focus:ring-2 focus:ring-accent-cyan focus:ring-offset-2 focus:ring-offset-bg
-          "
-        >
-          <div className="
-            w-12 h-12 rounded-full
-            bg-accent-cyan/10 group-hover:bg-accent-cyan/20
-            border border-accent-cyan/30 group-hover:border-accent-cyan/50
-            flex items-center justify-center
-            transition-all
-          ">
-            <Plus className="w-6 h-6 text-accent-cyan" />
+      {displayBots.length === 0 ? (
+        <div className="panel flex flex-col items-center justify-center py-16">
+          <div className="w-20 h-20 mb-6 rounded-full bg-accent-cyan/10 border-2 border-accent-cyan/30 flex items-center justify-center">
+            <Plus className="w-10 h-10 text-accent-cyan" />
           </div>
-          <span className="text-sm font-medium text-accent-cyan">
-            Spawn Bot
-          </span>
-        </button>
-      </div>
+          <h3 className="mono-data text-xl text-text-primary mb-3">No Bots Deployed</h3>
+          <p className="text-sm text-text-secondary text-center max-w-md mb-6">
+            Your fleet is empty. Spawn your first bot to get started.
+          </p>
+          <button
+            onClick={onSpawnClick}
+            className="
+              px-6 py-3 text-sm font-medium
+              bg-accent-cyan/20 border-2 border-accent-cyan
+              text-accent-cyan
+              hover:bg-accent-cyan/30 hover:scale-105
+              transition-all duration-200
+              focus:outline-none focus:ring-2 focus:ring-accent-cyan focus:ring-offset-2 focus:ring-offset-bg
+            "
+          >
+            Spawn Your First Bot
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+          {displayBots.map((bot, index) => (
+            <div
+              key={bot.id}
+              style={{
+                animation: `fade-slide-in 0.4s ease-out ${index * 50}ms forwards`,
+                opacity: 0,
+              }}
+            >
+              <BotCard
+                bot={bot}
+                onClick={() => onBotClick?.(bot.id)}
+              />
+            </div>
+          ))}
+
+          {/* Spawn bot tile */}
+          <button
+            onClick={onSpawnClick}
+            className="
+              group
+              min-h-[200px]
+              bg-bg-surface/50 border-2 border-dashed border-border
+              hover:border-accent-cyan hover:bg-accent-cyan/5
+              transition-all duration-200
+              flex flex-col items-center justify-center gap-3
+              focus:outline-none focus:ring-2 focus:ring-accent-cyan focus:ring-offset-2 focus:ring-offset-bg
+            "
+          >
+            <div className="
+              w-12 h-12 rounded-full
+              bg-accent-cyan/10 group-hover:bg-accent-cyan/20
+              border border-accent-cyan/30 group-hover:border-accent-cyan/50
+              flex items-center justify-center
+              transition-all
+            ">
+              <Plus className="w-6 h-6 text-accent-cyan" />
+            </div>
+            <span className="text-sm font-medium text-accent-cyan">
+              Spawn Bot
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

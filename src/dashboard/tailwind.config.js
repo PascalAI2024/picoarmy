@@ -54,11 +54,16 @@ export default {
       },
       animation: {
         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+        'fade-slide-in': 'fade-slide-in 0.4s ease-out forwards',
       },
       keyframes: {
         'pulse-glow': {
           '0%, 100%': { opacity: '1', filter: 'brightness(1)' },
           '50%': { opacity: '0.7', filter: 'brightness(1.3)' },
+        },
+        'fade-slide-in': {
+          from: { opacity: '0', transform: 'translateY(10px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
         }
       }
     },

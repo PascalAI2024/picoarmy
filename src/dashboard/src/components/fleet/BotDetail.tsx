@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
 import { StatusLED } from '../ui/StatusLED';
+import { LogStream } from '../telemetry/LogStream';
+import { ActivityChart } from '../telemetry/ActivityChart';
 import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
-import { fetchProviders, fetchTools, updateBotSettings, fetchSouls } from '../../lib/api';
+import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool } from '../../lib/api';
 import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
 
 interface BotDetailProps {
@@ -23,25 +26,34 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [loadingTools, setLoadingTools] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [executingTool, setExecutingTool] = useState<string | null>(null);
+  const [soulContent, setSoulContent] = useState<string | null>(null);
+  const [loadingSoul, setLoadingSoul] = useState(false);
+  const [deployingSoul, setDeployingSoul] = useState(false);
+  const [selectedSoulToDeploy, setSelectedSoulToDeploy] = useState('');
 
   useEffect(() => {
     const loadData = async () => {
       setLoadingProviders(true);
+      setLoadingSoul(true);
       try {
-        const [providersData, soulsData] = await Promise.all([
+        const [providersData, soulsData, soulData] = await Promise.all([
           fetchProviders(),
           fetchSouls(),
+          fetchSoulContent(bot.id).catch(() => null),
         ]);
         setProviders(providersData);
         setSouls(soulsData);
+        if (soulData) setSoulContent(soulData.content);
       } catch (error) {
         console.error('Failed to load providers/souls:', error);
       } finally {
         setLoadingProviders(false);
+        setLoadingSoul(false);
       }
     };
     loadData();
-  }, []);
+  }, [bot.id]);
 
   const loadTools = async () => {
     setLoadingTools(true);
@@ -59,12 +71,56 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
     setSavingSettings(true);
     try {
       await updateBotSettings(bot.id, settings);
-      alert('Settings saved successfully');
+      toast.success('Settings saved');
     } catch (error) {
       console.error('Failed to save settings:', error);
-      alert('Failed to save settings');
+      toast.error('Failed to save settings');
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleExecuteTool = async (toolName: string) => {
+    setExecutingTool(toolName);
+    try {
+      const result = await callTool(toolName, {}, bot.name);
+      toast.success(`Tool "${toolName}" executed`);
+      console.log('[Tool Result]', toolName, result);
+    } catch (error) {
+      console.error('Tool execution failed:', error);
+      toast.error(`Tool "${toolName}" failed`);
+    } finally {
+      setExecutingTool(null);
+    }
+  };
+
+  const handleDestroy = () => {
+    if (window.confirm(`Destroy bot "${bot.name}"? This cannot be undone.`)) {
+      onDestroy?.();
+    }
+  };
+
+  const handleRestart = () => {
+    if (window.confirm(`Restart bot "${bot.name}"?`)) {
+      onRestart?.();
+    }
+  };
+
+  const handleDeploySoul = async () => {
+    if (!selectedSoulToDeploy) return;
+    setDeployingSoul(true);
+    try {
+      await deploySoul(bot.id, selectedSoulToDeploy);
+      toast.success(`Soul "${selectedSoulToDeploy}" deployed`);
+      // Refresh soul content
+      const soulData = await fetchSoulContent(bot.id);
+      setSoulContent(soulData.content);
+      setSelectedSoulToDeploy('');
+    } catch (error) {
+      console.error('Failed to deploy soul:', error);
+      toast.error('Failed to deploy soul');
+    } finally {
+      setDeployingSoul(false);
     }
   };
 
@@ -192,28 +248,83 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
         </TabsContent>
 
         <TabsContent value="soul" className="space-y-4">
+          {/* Deploy soul control */}
           <div className="panel">
-            <div className="mono-data text-sm text-text-secondary space-y-4">
-              <p># {bot.soul_name.toUpperCase()} SOUL</p>
-              <p>You are a helpful AI assistant specialized in {bot.soul_name} tasks.</p>
-              <p>Your primary goal is to assist users effectively and efficiently.</p>
-              <p className="text-text-muted italic">
-                // This is mock SOUL.md content. In production, this will be fetched from the bot's workspace.
-              </p>
+            <div className="flex items-center gap-3">
+              <select
+                value={selectedSoulToDeploy}
+                onChange={(e) => setSelectedSoulToDeploy(e.target.value)}
+                className="flex-1 bg-bg-surface border border-border px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-cyan"
+              >
+                <option value="">Select soul to deploy...</option>
+                {souls.map((soul) => (
+                  <option key={soul.name} value={soul.name}>
+                    {soul.name} - {soul.description}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleDeploySoul}
+                disabled={!selectedSoulToDeploy || deployingSoul}
+                className="
+                  px-4 py-2 text-sm
+                  bg-accent-cyan/20 border border-accent-cyan
+                  text-accent-cyan
+                  hover:bg-accent-cyan/30
+                  transition-colors
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                "
+              >
+                {deployingSoul ? 'Deploying...' : 'Deploy'}
+              </button>
             </div>
+          </div>
+
+          {/* Soul content */}
+          <div className="panel">
+            <div className="text-xs text-text-muted uppercase tracking-wider mb-3">
+              Current Soul: {bot.soul_name}
+            </div>
+            {loadingSoul ? (
+              <div className="animate-pulse space-y-2">
+                <div className="h-4 bg-bg-elevated rounded w-1/3" />
+                <div className="h-3 bg-bg-elevated rounded w-full" />
+                <div className="h-3 bg-bg-elevated rounded w-2/3" />
+              </div>
+            ) : soulContent ? (
+              <pre className="mono-data text-sm text-text-secondary whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto">
+                {soulContent}
+              </pre>
+            ) : (
+              <p className="text-sm text-text-muted">No soul content available.</p>
+            )}
           </div>
         </TabsContent>
 
         <TabsContent value="skills" className="space-y-4">
-          <div className="panel">
-            <div className="text-sm text-text-secondary">
-              <p className="mono-data mb-4">
-                // Deployed skills: 0
-              </p>
-              <p className="text-text-muted">
-                No skills deployed. Skills can be deployed from the Skills library.
-              </p>
+          <div className="panel flex flex-col items-center justify-center py-12">
+            <div className="w-16 h-16 mb-4 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-accent-cyan"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
+              </svg>
             </div>
+            <h3 className="mono-data text-lg text-text-primary mb-2">No Skills Deployed</h3>
+            <p className="text-sm text-text-secondary text-center max-w-md mb-1">
+              Skills extend bot capabilities with custom commands and behaviors.
+            </p>
+            <p className="text-xs text-text-muted text-center max-w-md">
+              Skills library coming soon — deploy pre-built skills or create your own.
+            </p>
           </div>
         </TabsContent>
 
@@ -358,8 +469,31 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
             </div>
 
             {tools.length === 0 ? (
-              <div className="text-sm text-text-muted">
-                No tools loaded. Click Refresh to load available tools for this bot.
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="w-16 h-16 mb-4 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center">
+                  <svg
+                    className="w-8 h-8 text-accent-cyan"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                </div>
+                <p className="text-sm text-text-secondary text-center">
+                  Click <span className="text-accent-cyan">Refresh</span> to discover available MCP tools
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -381,6 +515,20 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                         `}>
                           {tool.scope}
                         </span>
+                        <button
+                          onClick={() => handleExecuteTool(tool.name)}
+                          disabled={executingTool === tool.name}
+                          className="
+                            px-2 py-0.5 text-xs
+                            bg-accent-cyan/10 border border-accent-cyan/30
+                            text-accent-cyan
+                            hover:bg-accent-cyan/20
+                            transition-colors
+                            disabled:opacity-50 disabled:cursor-not-allowed
+                          "
+                        >
+                          {executingTool === tool.name ? 'Running...' : 'Execute'}
+                        </button>
                       </div>
                     </div>
                     <div className="text-xs text-text-secondary">
@@ -397,24 +545,17 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
         </TabsContent>
 
         <TabsContent value="telemetry" className="space-y-4">
-          <div className="panel">
-            <div className="mono-data text-xs text-text-secondary space-y-1">
-              <p className="text-text-muted">// Recent activity</p>
-              <p>14:32:15 [heartbeat] OK</p>
-              <p>14:31:45 [message] User message received</p>
-              <p>14:31:30 [tool] Executed filesystem.read</p>
-              <p>14:30:00 [heartbeat] OK</p>
-              <p className="text-text-muted pt-2">
-                // This is mock telemetry. In production, this will stream from LogStream component.
-              </p>
-            </div>
-          </div>
+          {/* Activity Chart */}
+          <ActivityChart height={250} timeWindow={60} />
+
+          {/* Log Stream */}
+          <LogStream maxLines={500} height="400px" />
         </TabsContent>
 
         <TabsContent value="actions" className="space-y-4">
           <div className="flex gap-3">
             <button
-              onClick={onRestart}
+              onClick={handleRestart}
               className="
                 px-4 py-2 text-sm
                 bg-status-idle/20 border border-status-idle
@@ -427,7 +568,7 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
             </button>
 
             <button
-              onClick={onDestroy}
+              onClick={handleDestroy}
               className="
                 px-4 py-2 text-sm
                 bg-status-offline/20 border border-status-offline

@@ -1,4 +1,5 @@
-import { Database, Grid3x3, Cpu, ScrollText, Plus } from 'lucide-react';
+import { Database, Grid3x3, Cpu, ScrollText, Plus, X } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { StatusLED } from '../ui/StatusLED';
 import { useFleetStore } from '../../stores/fleet';
 
@@ -11,18 +12,47 @@ const navItems = [
 
 interface SidebarProps {
   onSpawnClick?: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export function Sidebar({ onSpawnClick }: SidebarProps) {
-  const { bots, selectBot } = useFleetStore();
+export function Sidebar({ onSpawnClick, mobileOpen = false, onMobileClose }: SidebarProps) {
+  const { bots } = useFleetStore();
+  const navigate = useNavigate();
+
   return (
-    <aside className="fixed left-0 top-0 h-screen w-60 bg-bg-surface border-r border-border flex flex-col">
+    <>
+      {/* Mobile overlay backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/80 z-40 md:hidden"
+          onClick={() => onMobileClose?.()}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`
+          fixed left-0 top-0 h-screen w-60 bg-bg-surface border-r border-border flex flex-col z-50
+          transition-transform duration-300
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+      >
       {/* Branding */}
-      <div className="p-6 border-b border-border">
-        <h1 className="mono-data text-lg font-semibold tracking-tight text-text-primary">
-          PICOARMY
-        </h1>
-        <p className="text-xs text-text-muted mt-1">Fleet Command</p>
+      <div className="p-6 border-b border-border flex items-center justify-between">
+        <div>
+          <h1 className="mono-data text-lg font-semibold tracking-tight text-text-primary">
+            PICOARMY
+          </h1>
+          <p className="text-xs text-text-muted mt-1">Fleet Command</p>
+        </div>
+        {/* Mobile close button */}
+        <button
+          onClick={() => onMobileClose?.()}
+          className="md:hidden p-1 text-text-muted hover:text-text-primary transition-colors"
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Fleet section */}
@@ -35,7 +65,7 @@ export function Sidebar({ onSpawnClick }: SidebarProps) {
             {bots.map((bot) => (
               <button
                 key={bot.id}
-                onClick={() => selectBot(bot.id)}
+                onClick={() => navigate(`/fleet/${bot.id}`)}
                 className="
                   w-full flex items-center gap-2
                   px-3 py-2 rounded-sm
@@ -60,20 +90,23 @@ export function Sidebar({ onSpawnClick }: SidebarProps) {
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
-                <a
+                <NavLink
                   key={item.href}
-                  href={item.href}
-                  className="
+                  to={item.href}
+                  end={item.href === '/'}
+                  className={({ isActive }) => `
                     flex items-center gap-3
                     px-3 py-2 rounded-sm
-                    hover:bg-bg-elevated
-                    text-sm text-text-secondary
-                    transition-colors
-                  "
+                    text-sm transition-colors
+                    ${isActive
+                      ? 'bg-accent-cyan/10 text-accent-cyan border-l-2 border-accent-cyan'
+                      : 'text-text-secondary hover:bg-bg-elevated border-l-2 border-transparent'
+                    }
+                  `}
                 >
                   <Icon className="h-4 w-4" />
                   <span>{item.label}</span>
-                </a>
+                </NavLink>
               );
             })}
           </div>
@@ -98,6 +131,7 @@ export function Sidebar({ onSpawnClick }: SidebarProps) {
           <span className="font-medium text-sm">Spawn Bot</span>
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

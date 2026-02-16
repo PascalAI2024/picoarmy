@@ -1,8 +1,10 @@
 // SSE connection hook with auto-reconnect
 
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { useFleetStore } from '../stores/fleet';
 import { useTelemetryStore } from '../stores/telemetry';
+import { useMCPStore } from '../stores/mcp';
 import type { Bot, LogEntry } from '../lib/types';
 
 interface UseSSEOptions {
@@ -25,8 +27,9 @@ export function useSSE(options: UseSSEOptions = {}) {
   const reconnectDelayRef = useRef(1000); // Start with 1s delay
 
   // Store actions
-  const { setBots, addBot, removeBot } = useFleetStore();
+  const { setBots, addBot, removeBot, updateBot } = useFleetStore();
   const { addLog } = useTelemetryStore();
+  const { addEvent } = useMCPStore();
 
   const connect = () => {
     // Cleanup existing connection
@@ -64,6 +67,7 @@ export function useSSE(options: UseSSEOptions = {}) {
         const bot: Bot = JSON.parse(event.data);
         console.log('[SSE] Bot spawned:', bot.name);
         addBot(bot);
+        toast.success(`Bot "${bot.name}" spawned`);
       });
 
       // Handle 'fleet:destroy' event
@@ -73,10 +77,73 @@ export function useSSE(options: UseSSEOptions = {}) {
         removeBot(id);
       });
 
+      // Handle 'fleet:crash' event
+      eventSource.addEventListener('fleet:crash', (event) => {
+        const data = JSON.parse(event.data);
+        console.error('[SSE] Bot crashed:', data);
+        toast.error(`Bot "${data.name || data.id}" crashed: ${data.reason || 'unknown'}`);
+        if (data.id) {
+          updateBot(data.id, { status: 'offline' });
+        }
+      });
+
       // Handle 'log:entry' event
       eventSource.addEventListener('log:entry', (event) => {
         const log: LogEntry = JSON.parse(event.data);
         addLog(log);
+      });
+
+      // MCP events
+      eventSource.addEventListener('mcp:tool-called', (event) => {
+        const data = JSON.parse(event.data);
+        addEvent({
+          id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'tool-called',
+          timestamp: new Date().toISOString(),
+          data,
+        });
+      });
+
+      eventSource.addEventListener('mcp:tool-error', (event) => {
+        const data = JSON.parse(event.data);
+        addEvent({
+          id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'tool-error',
+          timestamp: new Date().toISOString(),
+          data,
+        });
+        toast.error(`MCP tool error: ${data.tool || 'unknown'}`);
+      });
+
+      eventSource.addEventListener('mcp:tool-denied', (event) => {
+        const data = JSON.parse(event.data);
+        addEvent({
+          id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'tool-denied',
+          timestamp: new Date().toISOString(),
+          data,
+        });
+      });
+
+      eventSource.addEventListener('mcp:server-connected', (event) => {
+        const data = JSON.parse(event.data);
+        addEvent({
+          id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'server-connected',
+          timestamp: new Date().toISOString(),
+          data,
+        });
+      });
+
+      eventSource.addEventListener('mcp:server-error', (event) => {
+        const data = JSON.parse(event.data);
+        addEvent({
+          id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: 'server-error',
+          timestamp: new Date().toISOString(),
+          data,
+        });
+        toast.error(`MCP server error: ${data.server || 'unknown'}`);
       });
 
       // Connection error

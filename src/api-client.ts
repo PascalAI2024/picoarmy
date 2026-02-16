@@ -104,7 +104,7 @@ function enrichBot(bot: Bot): Bot {
     ...bot,
     status,
     uptime_seconds: uptimeSeconds,
-    memory_mb: bot.memory_mb || Math.floor(Math.random() * 30 + 10), // mock memory
+    memory_mb: bot.memory_mb || null,
   };
 }
 

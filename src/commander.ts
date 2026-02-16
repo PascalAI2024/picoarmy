@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from 'express';
+import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -16,6 +17,10 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // Middleware
+app.use(cors({
+  origin: process.env.DASHBOARD_URL || 'http://localhost:5173',
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -377,6 +382,25 @@ app.get('/api/souls', (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching souls:', error);
     res.status(500).json({ error: 'Failed to fetch souls' });
+  }
+});
+
+// GET /api/fleet/:id/soul — Get bot's current soul content
+app.get('/api/fleet/:id/soul', async (req: Request, res: Response) => {
+  try {
+    const bot = await apiClient.getBot(req.params.id!);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const soulPath = path.join(process.cwd(), 'souls', `${bot.soul_name}.md`);
+    if (!fs.existsSync(soulPath)) {
+      return res.json({ content: `# ${bot.soul_name}\n\nSoul template not found on disk.`, soul_name: bot.soul_name });
+    }
+
+    const content = fs.readFileSync(soulPath, 'utf-8');
+    res.json({ content, soul_name: bot.soul_name });
+  } catch (error) {
+    console.error('Error fetching soul content:', error);
+    res.status(500).json({ error: 'Failed to fetch soul content' });
   }
 });
 

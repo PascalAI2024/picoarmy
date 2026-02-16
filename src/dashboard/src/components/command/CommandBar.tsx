@@ -1,7 +1,7 @@
 // Terminal-style command palette (Cmd+K)
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Dialog } from '../ui/Dialog';
+import { useNavigate } from 'react-router-dom';
 import { useFleetStore } from '../../stores';
 import { useFleet } from '../../hooks';
 
@@ -21,7 +21,8 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
   const [input, setInput] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const { bots, selectBot } = useFleetStore();
+  const navigate = useNavigate();
+  const { bots } = useFleetStore();
   const { spawnBot, destroyBot } = useFleet();
 
   // Build command list
@@ -74,7 +75,7 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
         label: 'list bots',
         keywords: ['list', 'show', 'all', 'bots'],
         action: () => {
-          selectBot(null);
+          navigate('/');
           onOpenChange(false);
         },
       },
@@ -87,7 +88,7 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
         label: `go ${bot.name}`,
         keywords: ['go', 'navigate', 'open', bot.name, bot.id],
         action: () => {
-          selectBot(bot.id);
+          navigate(`/fleet/${bot.id}`);
           onOpenChange(false);
         },
       });
@@ -106,7 +107,7 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
     });
 
     return cmds;
-  }, [bots, spawnBot, destroyBot, selectBot, onOpenChange]);
+  }, [bots, spawnBot, destroyBot, navigate, onOpenChange]);
 
   // Filter commands based on input
   const filteredCommands = useMemo(() => {
@@ -151,11 +152,18 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
     }
   }, [open]);
 
+  if (!open) return null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <div className="fixed inset-0 flex items-start justify-center pt-[20vh] z-50">
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+        onClick={() => onOpenChange(false)}
+      />
+      <div className="fixed inset-0 flex items-start justify-center pt-[20vh] z-50 pointer-events-none">
         <div
-          className="w-full max-w-2xl surface-glass border-2 border-cyan-500 rounded-sm shadow-2xl"
+          className="w-full max-w-2xl surface-glass border-2 border-cyan-500 rounded-sm shadow-2xl pointer-events-auto"
           style={{ boxShadow: '0 0 40px rgba(6, 182, 212, 0.3)' }}
         >
           {/* Command input */}
@@ -209,6 +217,6 @@ export function CommandBar({ open, onOpenChange }: CommandBarProps) {
           </div>
         </div>
       </div>
-    </Dialog>
+    </>
   );
 }

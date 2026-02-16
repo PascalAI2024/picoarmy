@@ -113,8 +113,23 @@ export function LogStream({ maxLines = 500, height = '400px' }: LogStreamProps) 
         style={{ scrollBehavior: 'smooth' }}
       >
         {filteredLogs.length === 0 ? (
-          <div className="text-center text-gray-500 py-8">
-            {filter ? 'No logs match filter' : 'No logs yet'}
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            {filter ? (
+              <>
+                <div className="w-12 h-12 mb-3 rounded-full bg-status-idle/10 border border-status-idle/30 flex items-center justify-center">
+                  <span className="text-2xl">🔍</span>
+                </div>
+                <p className="text-text-secondary">No logs match filter</p>
+              </>
+            ) : (
+              <>
+                <div className="w-12 h-12 mb-3 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center">
+                  <span className="text-2xl">📡</span>
+                </div>
+                <p className="text-text-secondary mb-1">Awaiting telemetry...</p>
+                <span className="inline-block w-1.5 h-4 bg-accent-cyan animate-pulse" />
+              </>
+            )}
           </div>
         ) : (
           filteredLogs.map((log) => (

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
@@ -62,7 +63,7 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
       setTtl('2');
     } catch (err) {
       console.error('Failed to spawn bot:', err);
-      alert('Failed to spawn bot. Check console for details.');
+      toast.error('Failed to spawn bot');
     } finally {
       setLoading(false);
     }

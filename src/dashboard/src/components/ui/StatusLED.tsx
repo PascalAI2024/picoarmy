@@ -26,16 +26,31 @@ const glowMap = {
 
 export function StatusLED({ status, size = 'md', className = '' }: StatusLEDProps) {
   return (
-    <div
-      className={`
-        status-led
-        ${sizeMap[size]}
-        ${statusColorMap[status]}
-        ${glowMap[status]}
-        ${className}
-      `}
-      aria-label={`Status: ${status}`}
-      role="status"
-    />
+    <div className="relative">
+      {/* Outer glow ring */}
+      <div
+        className={`
+          absolute inset-0 -m-1
+          rounded-full
+          ${statusColorMap[status]}
+          opacity-20
+          blur-sm
+          animate-pulse-glow
+        `}
+      />
+      {/* LED dot */}
+      <div
+        className={`
+          relative
+          status-led
+          ${sizeMap[size]}
+          ${statusColorMap[status]}
+          ${glowMap[status]}
+          ${className}
+        `}
+        aria-label={`Status: ${status}`}
+        role="status"
+      />
+    </div>
   );
 }

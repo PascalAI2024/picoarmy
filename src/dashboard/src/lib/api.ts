@@ -68,6 +68,10 @@ export async function fetchBotLogs(
 }
 
 // Soul API
+export async function fetchSoulContent(botId: string): Promise<{ content: string; soul_name: string }> {
+  return fetchJSON(`/api/fleet/${botId}/soul`);
+}
+
 export async function fetchSouls(): Promise<SoulTemplate[]> {
   return fetchJSON<SoulTemplate[]>('/api/souls');
 }
@@ -118,6 +122,7 @@ export default {
   createBot,
   deleteBot,
   fetchBotLogs,
+  fetchSoulContent,
   fetchSouls,
   deploySoul,
   fetchProviders,

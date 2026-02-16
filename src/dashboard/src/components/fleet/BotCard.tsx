@@ -26,14 +26,17 @@ export function BotCard({ bot, onClick }: BotCardProps) {
     <button
       onClick={onClick}
       className={`
-        group
+        group relative
         w-full text-left
         bg-bg-surface border border-border
         border-l-2 ${statusBorderMap[bot.status]}
         p-4
-        hover:border-border-hover hover:shadow-lg
+        hover:border-border-hover hover:shadow-lg hover:-translate-y-0.5 hover:scale-[1.01]
         transition-all duration-200
         focus:outline-none focus:ring-2 focus:ring-accent-cyan focus:ring-offset-2 focus:ring-offset-bg
+        before:absolute before:inset-0 before:opacity-0 before:transition-opacity before:duration-200
+        before:bg-gradient-to-br before:from-accent-cyan/5 before:to-transparent
+        hover:before:opacity-100
       `}
     >
       {/* Header */}

@@ -420,8 +420,21 @@ export class ProcessManager extends EventEmitter {
     let memoryMb: number | null = null;
     if (bot.pid) {
       try {
-        // Read memory from /proc on Linux, estimate on Mac
-        memoryMb = Math.floor(Math.random() * 20 + 8); // TODO: real memory from process
+        if (process.platform === 'linux') {
+          // Read RSS from /proc/<pid>/status (in kB)
+          const statusFile = fs.readFileSync(`/proc/${bot.pid}/status`, 'utf-8');
+          const match = statusFile.match(/VmRSS:\s+(\d+)\s+kB/);
+          if (match) {
+            memoryMb = Math.floor(parseInt(match[1], 10) / 1024);
+          }
+        } else {
+          // macOS: use ps to get RSS in KB
+          const { execSync } = require('child_process');
+          const output = execSync(`ps -o rss= -p ${bot.pid}`, { encoding: 'utf-8' }).trim();
+          if (output) {
+            memoryMb = Math.floor(parseInt(output, 10) / 1024);
+          }
+        }
       } catch {
         memoryMb = null;
       }

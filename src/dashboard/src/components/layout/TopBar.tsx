@@ -1,9 +1,16 @@
-import { Command } from 'lucide-react';
+import { Command, Menu } from 'lucide-react';
 import { StatusLED } from '../ui/StatusLED';
 import { useEffect, useState } from 'react';
 import { useFleetStore } from '../../stores/fleet';
 
-export function TopBar() {
+interface TopBarProps {
+  sseConnected: boolean;
+  sseError: string | null;
+  onCommandBarOpen: () => void;
+  onMobileMenuToggle?: () => void;
+}
+
+export function TopBar({ sseConnected, sseError, onCommandBarOpen, onMobileMenuToggle }: TopBarProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const bots = useFleetStore((state) => state.bots);
   const fleetStats = {
@@ -33,6 +40,14 @@ export function TopBar() {
   return (
     <header className="sticky top-0 z-40 h-16 border-b border-border bg-bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-bg-surface/60">
       <div className="flex h-full items-center justify-between px-6">
+        {/* Mobile hamburger */}
+        <button
+          onClick={onMobileMenuToggle}
+          className="md:hidden p-2 text-text-muted hover:text-text-primary transition-colors"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
         {/* Fleet stats */}
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
@@ -60,10 +75,19 @@ export function TopBar() {
           </div>
         </div>
 
-        {/* Right side: Command bar trigger + clock */}
+        {/* Right side: SSE indicator + Command bar trigger + clock */}
         <div className="flex items-center gap-4">
+          {/* SSE connection indicator */}
+          <div className="flex items-center gap-2" title={sseError || (sseConnected ? 'SSE connected' : 'SSE disconnected')}>
+            <div className={`h-2 w-2 rounded-full ${sseConnected ? 'bg-status-online animate-pulse' : 'bg-status-offline'}`} />
+            <span className="mono-data text-xs text-text-muted">
+              {sseConnected ? 'LIVE' : 'DISCONNECTED'}
+            </span>
+          </div>
+
           {/* Command bar trigger */}
           <button
+            onClick={onCommandBarOpen}
             className="
               flex items-center gap-2
               px-3 py-1.5
@@ -72,10 +96,10 @@ export function TopBar() {
               text-text-secondary
               transition-all
             "
-            title="Open command palette (⌘K)"
+            title="Open command palette"
           >
             <Command className="h-3.5 w-3.5" />
-            <span className="mono-data text-xs">⌘K</span>
+            <span className="mono-data text-xs">K</span>
           </button>
 
           {/* System clock */}
