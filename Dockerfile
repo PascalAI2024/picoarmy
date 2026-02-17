@@ -34,7 +34,7 @@ COPY --from=dashboard-builder /build/src/dashboard/dist ./src/dashboard/dist
 # ── Stage 3: Runtime Container ──────────────────────────────────
 FROM node:20-slim
 
-# Install PostgreSQL 15 and build dependencies
+# Install PostgreSQL 15, MCP server dependencies (Python + uv), and runtime tools
 RUN apt-get update && apt-get install -y \
     postgresql-15 \
     postgresql-contrib-15 \
@@ -42,7 +42,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
     supervisor \
+    python3 \
+    python3-pip \
+    pipx \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv/uvx for Python-based MCP servers (MiniMax TTS/video/image)
+RUN pipx install uv && ln -s /root/.local/bin/uv /usr/local/bin/uv && ln -s /root/.local/bin/uvx /usr/local/bin/uvx
 
 # Download PostgREST
 RUN wget https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz \

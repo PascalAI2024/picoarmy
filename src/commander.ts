@@ -1242,6 +1242,29 @@ const commanderTools = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'swarm_moa',
+      description: 'Mixture-of-Agents: parallel proposers per layer + aggregator. More comprehensive than swarm_task — uses diverse LLMs to generate multiple perspectives, then synthesizes the best response. Use for complex questions requiring multi-angle analysis.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'The user query to answer' },
+          context: { type: 'string', description: 'Optional web search context (grounded data). ALWAYS include this when you have search results.' },
+          proposer_count: { type: 'number', description: 'Number of parallel proposers per layer (default 4)' },
+          layers: { type: 'number', description: 'Number of refinement layers (default 2, max 3). MoA-Lite uses 2.' },
+          providers: {
+            type: 'array',
+            description: 'Provider names for proposers (e.g. ["groq-scout", "groq-maverick", "groq-kimi", "groq-qwen"]). Each uses different Groq model to spread rate limits.',
+            items: { type: 'string' },
+          },
+          aggregator_provider: { type: 'string', description: 'Provider for final aggregation (default "groq-70b" — strongest free model)' },
+        },
+        required: ['task'],
+      },
+    },
+  },
 ];
 
 // AI-generate a soul template using Commander's LLM
@@ -1692,16 +1715,20 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       try {
         const result = await mcpHub.callTool({
           toolName: 'webSearchPrime',
-          arguments: { query },
+          arguments: { search_query: query, location: 'us', content_size: 'high' },
           botName: 'commander',
         });
         const text = result.content
           .filter(c => c.type === 'text' && c.text)
           .map(c => c.text)
           .join('\n');
-        if (text) {
-          console.log(`[web_search] Z.AI webSearchPrime returned ${text.length} chars for "${query}"`);
-          return JSON.stringify({ source: 'z-ai-search', query, content: text.slice(0, 10000) });
+        // Check for actual content — Z.AI returns "[]" or empty strings when no results
+        const cleaned = text.replace(/^["'\s[\]]+$/g, '').trim();
+        if (cleaned && cleaned.length > 10) {
+          console.log(`[web_search] Z.AI webSearchPrime returned ${cleaned.length} chars for "${query}"`);
+          return JSON.stringify({ source: 'z-ai-search', query, content: cleaned.slice(0, 10000) });
+        } else {
+          console.log(`[web_search] Z.AI webSearchPrime returned empty/minimal for "${query}", falling through to MiniMax`);
         }
       } catch (e) {
         console.error('[web_search] Z.AI webSearchPrime failed:', e instanceof Error ? e.message : String(e));
@@ -2019,6 +2046,205 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         total_tokens: totalTokens,
       });
     }
+    case 'swarm_moa': {
+      const task = args.task as string;
+      const context = (args.context as string) || '';
+      const proposerCount = (args.proposer_count as number) || 4;
+      const layerCount = Math.min((args.layers as number) || 2, 3); // Max 3 layers
+      const providerNames = (args.providers as string[]) || ['groq-scout', 'groq-maverick', 'groq-kimi', 'groq-qwen'];
+      const aggregatorProvider = (args.aggregator_provider as string) || 'groq-70b';
+
+      if (!task) {
+        return JSON.stringify({ error: 'task is required' });
+      }
+
+      console.log(`[MoA] Starting ${layerCount} layers × ${proposerCount} proposers for: ${task.slice(0, 100)}`);
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
+        message: `🧠 MoA started: ${layerCount}L × ${proposerCount}P`,
+        timestamp: new Date().toISOString(),
+      });
+
+      type LayerResponse = { provider: string; model: string; output: string; tokens: number };
+      const allLayerResponses: LayerResponse[][] = []; // [layer][proposer]
+
+      // Grounding rule (same as swarm_task)
+      const groundingRule = context
+        ? '\n\nCRITICAL: ONLY use information from the source data provided. Do NOT make up, fabricate, or guess any facts, numbers, scores, names, or dates. If the source data does not contain the answer, say "The available data does not include this information" — NEVER invent data.'
+        : '';
+
+      // ── Layer Loop ──
+      for (let layer = 0; layer < layerCount; layer++) {
+        console.log(`[MoA] Layer ${layer + 1}/${layerCount} — firing ${proposerCount} proposers in parallel...`);
+        broadcastSSE('log:entry', {
+          id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
+          message: `🔄 Layer ${layer + 1}/${layerCount} — ${proposerCount} proposers working...`,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Build prompt for this layer
+        let userPrompt = task + groundingRule;
+        if (layer === 0 && context) {
+          userPrompt = `## Source Data (from web search)\n\n${context}\n\n## Your Task\n${task}${groundingRule}`;
+        } else if (layer > 0 && allLayerResponses[layer - 1]) {
+          // Include previous layer responses + original context
+          const prevResponses = allLayerResponses[layer - 1]!
+            .map((r, idx) => `### Proposer ${idx + 1} (${r.provider})\n${r.output}`)
+            .join('\n\n');
+          const sourceSection = context ? `\n\n## Original Source Data\n${context}` : '';
+          userPrompt = `## Previous Layer Responses\n\n${prevResponses}${sourceSection}\n\n## Your Task\nCritically evaluate the above responses and provide your own refined answer to: ${task}${groundingRule}`;
+        }
+
+        // Fire all proposers in parallel
+        const proposerPromises = Array.from({ length: proposerCount }, async (_, idx) => {
+          const providerName = providerNames[idx % providerNames.length]!; // Cycle through providers
+          const preset = resolveProvider(providerName);
+
+          if (!preset?.apiBase || !preset?.apiKey) {
+            console.warn(`[MoA] Provider "${providerName}" not configured — skipping proposer ${idx + 1}`);
+            return null;
+          }
+
+          const systemContent = `You are a critical thinking assistant. Provide a thoughtful, well-reasoned response to the user's query. If you are refining previous responses, identify strengths and weaknesses, then synthesize an improved answer.`;
+
+          try {
+            const llmResp = await fetch(`${preset.apiBase}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${preset.apiKey}` },
+              body: JSON.stringify({
+                model: preset.model,
+                messages: [
+                  { role: 'system', content: systemContent },
+                  { role: 'user', content: userPrompt },
+                ],
+                max_completion_tokens: 4096,
+                temperature: 0.8, // Diversity
+              }),
+            });
+
+            if (!llmResp.ok) {
+              const errText = await llmResp.text();
+              console.error(`[MoA] Proposer ${idx + 1} (${providerName}) failed:`, errText.slice(0, 200));
+              return null; // Continue with other proposers
+            }
+
+            const llmData = await llmResp.json() as {
+              choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+              usage?: { total_tokens?: number };
+            };
+            const output = llmData.choices?.[0]?.message?.content || llmData.choices?.[0]?.message?.reasoning_content || '(no response)';
+            const tokens = llmData.usage?.total_tokens || 0;
+
+            console.log(`[MoA] Layer ${layer + 1} Proposer ${idx + 1} (${providerName}) done (${tokens} tokens)`);
+            return { provider: providerName, model: preset.model, output, tokens };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[MoA] Proposer ${idx + 1} (${providerName}) error:`, msg);
+            return null;
+          }
+        });
+
+        const layerResults = (await Promise.all(proposerPromises)).filter((r): r is LayerResponse => r !== null);
+
+        if (layerResults.length === 0) {
+          return JSON.stringify({ error: `Layer ${layer + 1} failed — all proposers errored (likely rate limits)`, layers: allLayerResponses });
+        }
+
+        allLayerResponses.push(layerResults);
+
+        console.log(`[MoA] Layer ${layer + 1} complete (${layerResults.length}/${proposerCount} proposers succeeded)`);
+        broadcastSSE('log:entry', {
+          id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
+          message: `✅ Layer ${layer + 1} done (${layerResults.length} responses)`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // ── Aggregation ──
+      console.log(`[MoA] Aggregating final layer responses...`);
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
+        message: `🎯 Aggregating final responses...`,
+        timestamp: new Date().toISOString(),
+      });
+
+      const finalLayerResponses = allLayerResponses[allLayerResponses.length - 1]!;
+      const aggregatorPreset = resolveProvider(aggregatorProvider);
+
+      if (!aggregatorPreset?.apiBase || !aggregatorPreset?.apiKey) {
+        return JSON.stringify({ error: `Aggregator provider "${aggregatorProvider}" not configured`, layers: allLayerResponses });
+      }
+
+      // MoA paper aggregator prompt
+      const aggregatorSystemPrompt = `You have been provided with a set of responses from various open-source models to the latest user query. Your task is to synthesize these responses into a single, high-quality response. It is crucial to critically evaluate the information provided in these responses, recognizing that some of it may be biased or incorrect. Your response should not simply replicate the given answers but should offer a refined, accurate, and comprehensive reply to the instruction. Ensure your response is well-structured, coherent, and adheres to the highest standards of accuracy and reliability.`;
+
+      const responsesForAggregator = finalLayerResponses
+        .map((r, idx) => `### Response ${idx + 1} (${r.provider})\n${r.output}`)
+        .join('\n\n');
+
+      const sourceSection = context ? `\n\n## Original Source Data\n${context}` : '';
+      const aggregatorUserPrompt = `## Responses to Synthesize\n\n${responsesForAggregator}${sourceSection}\n\n## Original Query\n${task}${groundingRule}\n\nSynthesize the above responses into a single, comprehensive answer.`;
+
+      try {
+        const aggResp = await fetch(`${aggregatorPreset.apiBase}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aggregatorPreset.apiKey}` },
+          body: JSON.stringify({
+            model: aggregatorPreset.model,
+            messages: [
+              { role: 'system', content: aggregatorSystemPrompt },
+              { role: 'user', content: aggregatorUserPrompt },
+            ],
+            max_completion_tokens: 8192,
+            temperature: 0.3, // Lower temp for synthesis
+          }),
+        });
+
+        if (!aggResp.ok) {
+          const errText = await aggResp.text();
+          return JSON.stringify({ error: `Aggregator failed: ${errText.slice(0, 200)}`, layers: allLayerResponses });
+        }
+
+        const aggData = await aggResp.json() as {
+          choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+          usage?: { total_tokens?: number };
+        };
+        const finalOutput = aggData.choices?.[0]?.message?.content || aggData.choices?.[0]?.message?.reasoning_content || '(no response)';
+        const aggTokens = aggData.usage?.total_tokens || 0;
+
+        const totalTokens = allLayerResponses.flat().reduce((sum, r) => sum + r.tokens, 0) + aggTokens;
+
+        console.log(`[MoA] Aggregation complete (${aggTokens} tokens). Total: ${totalTokens} tokens`);
+        broadcastSSE('log:entry', {
+          id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
+          message: `✅ MoA complete: ${layerCount}L × ${proposerCount}P → aggregated (${totalTokens} tokens)`,
+          timestamp: new Date().toISOString(),
+        });
+
+        return JSON.stringify({
+          task: task.slice(0, 200),
+          result: finalOutput,
+          layers: allLayerResponses.map((layerResponses, layerIdx) => ({
+            layer: layerIdx + 1,
+            proposers: layerResponses.map(r => ({
+              provider: r.provider,
+              model: r.model,
+              tokens: r.tokens,
+              output_preview: r.output.slice(0, 200),
+            })),
+          })),
+          aggregator: {
+            provider: aggregatorProvider,
+            model: aggregatorPreset.model,
+            tokens: aggTokens,
+          },
+          total_tokens: totalTokens,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: `Aggregation error: ${msg}`, layers: allLayerResponses });
+      }
+    }
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -2073,24 +2299,26 @@ You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS run a
 When a user asks ANYTHING that isn't fleet management or small talk, you MUST:
 1. web_search first (if the task needs real-world info)
 2. fetch_url — pick 1-2 of the most relevant URLs from search results and fetch their full content. This gives you REAL DATA, not just link titles.
-3. swarm_task — pass the fetched content as context, define 2-3 bots in pipeline order
+3. Choose your swarm tool:
+   - swarm_task for simple/linear tasks (summarize, format, extract)
+   - swarm_moa for complex/multi-faceted analysis (evaluate, compare, deep dive)
 4. Present the swarm's final result as your reply
 
-swarm_task does EVERYTHING in one call: generates souls, chains LLM calls, returns the final output. No deploy, no bot_task, no cleanup needed.
+Both swarm tools do EVERYTHING in one call: generate souls/prompts, run LLM calls, return final output. No deploy, no cleanup needed.
 
 ONLY answer directly (without swarm) for:
 - "how many bots?" / "list bots" / "fleet status" → use fleet_list
 - "spawn X" / "destroy X" / "restart X" → fleet management tools
 - "hi" / "hello" / greetings → short greeting
 
-EVERYTHING ELSE = web_search → fetch_url (1-2 URLs) → swarm_task → present result.
+EVERYTHING ELSE = web_search → fetch_url (1-2 URLs) → swarm tool (task or moa) → present result.
 web_search only returns link titles/snippets — NOT enough data. You MUST fetch_url to get actual content before passing to the swarm.
 You are the commander, not the worker. The swarm does the work.
 
 ## CRITICAL RULES
 - NEVER make up information. NEVER fabricate data. Always use web_search for facts.
-- ALWAYS pass the FULL web_search result JSON into swarm_task's context parameter — not a summary, the raw JSON string.
-- web_search returns link titles and snippets, NOT full page content. If the snippets don't contain enough detail, tell the user what you found and explain the limitation — do NOT guess or fill gaps.
+- Pass the web_search results into swarm_task's context parameter. Keep it concise — extract the key data (titles, snippets, dates) rather than dumping raw JSON. This helps the swarm bots focus on real data.
+- web_search returns link titles and snippets, NOT full page content. If the snippets don't contain enough detail, use fetch_url on 1-2 top URLs to get actual content.
 - Present the swarm's result directly. Don't describe the pipeline process to the user.
 - If the swarm says "data not available" or similar, relay that honestly — never override with fabricated data.
 - Be concise and action-oriented.
@@ -2127,13 +2355,16 @@ RULES:
 - Use glm-coding or minimax for bots with complex/sustained tasks.
 - Spread swarm bots across different Groq models to avoid hitting one model's daily limit.
 
-## Swarm Pipeline (YOUR PRIMARY TOOL)
-swarm_task runs a full bot pipeline in ONE call. No deploy, no cleanup, no chaining — it handles everything.
+## Swarm Tools (YOUR PRIMARY TOOLS — Choose the right one)
+
+You have TWO swarm modes. Choose based on task complexity:
+
+### swarm_task — Sequential Pipeline (fast, simple)
+Run 2-3 specialized bots in sequence (researcher → analyst → writer). Best for most tasks.
 
 How it works:
-- You define 2-3 bots in pipeline order (researcher → analyst → writer)
-- Each bot gets an AI-generated soul
-- Results chain automatically: bot 1 output → bot 2 input → bot 3 input
+- You define 2-3 bots in pipeline order
+- Results chain sequentially: bot 1 output → bot 2 input → bot 3 input
 - Returns the final bot's output as "result"
 
 Example: User asks "analyze competitor pricing"
@@ -2147,7 +2378,33 @@ Example: User asks "analyze competitor pricing"
     ]
   })
 
-IMPORTANT: Always pass web_search results as the "context" parameter. The first bot receives this context automatically.
+### swarm_moa — Mixture-of-Agents (comprehensive, multi-perspective)
+Run N proposers in PARALLEL per layer, then aggregate. Best for complex questions requiring diverse viewpoints.
+
+How it works:
+- Layer 1: 4 proposers answer in parallel (different LLMs for diversity)
+- Layer 2: 4 proposers refine Layer 1 responses in parallel
+- Aggregator: Synthesizes all Layer 2 responses into one high-quality answer
+
+When to use: Complex analysis, research questions, controversial topics, anything needing multi-angle evaluation.
+
+Example: User asks "what are the pros and cons of remote work for startups?"
+→ swarm_moa({
+    task: "Analyze pros and cons of remote work for startup teams",
+    context: "[paste web_search results here]",
+    proposer_count: 4,
+    layers: 2,
+    providers: ["groq-scout", "groq-maverick", "groq-kimi", "groq-qwen"],
+    aggregator_provider: "groq-70b"
+  })
+
+CHOOSING BETWEEN THEM:
+- Simple/linear task (summarize, format, extract) → swarm_task
+- Complex/multi-faceted question (analyze, evaluate, compare) → swarm_moa
+- Need speed → swarm_task (sequential is faster)
+- Need depth → swarm_moa (parallel proposers cover more angles)
+
+IMPORTANT: Always pass web_search results as the "context" parameter. Both tools use it for grounding.
 
 ## Dynamic Teams (deploy_team)
 Use deploy_team to create custom persistent bot teams for any task. YOU design the team:
@@ -2177,10 +2434,12 @@ Use mcp_list to see available tools. These include:
 For ANY substantive user request:
 
 1. web_search({query: "..."}) — get real data
-2. swarm_task({task, context: "[web_search results]", bots: [...]}) — one call does everything
+2. Choose swarm tool based on complexity:
+   - swarm_task for linear tasks
+   - swarm_moa for multi-perspective analysis
 3. YOUR REPLY = the swarm's "result" field. Present it directly. Don't describe the process.
 
-That's it. Two tool calls. web_search → swarm_task → reply.`;
+That's it. Two tool calls. web_search → swarm tool → reply.`;
 
     // Build messages
     conversationHistory = [

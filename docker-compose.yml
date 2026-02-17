@@ -68,8 +68,8 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_API_BASE: ${GROQ_API_BASE:-}
       GROQ_MODEL: ${GROQ_MODEL:-}
-      COMMANDER_PROVIDER: ${COMMANDER_PROVIDER:-groq-scout}
-      COMMANDER_MODEL: ${COMMANDER_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+      COMMANDER_PROVIDER: ${COMMANDER_PROVIDER:-groq-qwen}
+      COMMANDER_MODEL: ${COMMANDER_MODEL:-qwen/qwen3-32b}
     volumes:
       - ./src:/app/src
       - ./souls:/app/souls

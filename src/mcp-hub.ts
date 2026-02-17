@@ -4,6 +4,7 @@ import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ export class MCPHub extends EventEmitter {
         throw new Error(`Server "${name}" has no command or url configured`);
       }
 
-      await conn.client.connect(conn.transport);
+      await conn.client.connect(conn.transport as Transport);
       conn.status = 'connected';
 
       // Discover tools
