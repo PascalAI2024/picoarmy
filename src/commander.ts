@@ -627,9 +627,25 @@ app.post('/api/fleet/:id/chat', async (req: Request, res: Response) => {
       });
     }
 
+    // Build enriched system prompt: soul + identity + tools
+    const availableTools = mcpHub.listTools(bot.client_id);
+    const toolsSummary = availableTools.length > 0
+      ? `\n\n## Available Tools (MCP)\n\nYou have access to ${availableTools.length} tool(s) via MCP servers:\n${availableTools.map(t => `- **${t.name}** (${t.server}): ${t.description || 'no description'}`).join('\n')}\n\nWhen the user asks you to do something that matches a tool capability, describe which tool you would use and how. You cannot call tools directly in chat — but you can explain your plan.`
+      : '';
+
+    const systemPrompt = `${soulContent}
+
+## Identity
+
+You are **${bot.name}**, a bot in the PicoArmy fleet. You are powered by **${(bot.metadata?.model as string) || preset.model}** via the **${preset.name}** provider.
+
+- Fleet role: ${bot.is_permanent ? 'Permanent crew member' : 'Ephemeral worker'}
+- Soul template: ${bot.soul_name}
+- Status: online${toolsSummary}`;
+
     // Build messages array
     const messages: Array<{ role: string; content: string }> = [
-      { role: 'system', content: soulContent },
+      { role: 'system', content: systemPrompt },
     ];
 
     // Add conversation history if provided
