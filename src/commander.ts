@@ -1193,11 +1193,11 @@ ${styleHint ? `- ${styleHint}` : ''}
 
 Generate ONLY the markdown content (no preamble, no code fences). Start with the # heading.`;
 
-  const llmResponse = await fetch(\`\${preset.apiBase}/chat/completions\`, {
+  const llmResponse = await fetch(`${preset.apiBase}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': \`Bearer \${preset.apiKey}\`,
+      'Authorization': `Bearer ${preset.apiKey}`,
     },
     body: JSON.stringify({
       model: modelName,
@@ -1209,7 +1209,7 @@ Generate ONLY the markdown content (no preamble, no code fences). Start with the
 
   if (!llmResponse.ok) {
     const errorText = await llmResponse.text();
-    throw new Error(\`LLM error (\${llmResponse.status}): \${errorText.slice(0, 200)}\`);
+    throw new Error(`LLM error (${llmResponse.status}): ${errorText.slice(0, 200)}`);
   }
 
   const data = await llmResponse.json() as {
@@ -1223,8 +1223,8 @@ Generate ONLY the markdown content (no preamble, no code fences). Start with the
 
   // Clean up any markdown code fences if the LLM ignored instructions
   let cleaned = content.trim();
-  if (cleaned.startsWith('\`\`\`markdown') || cleaned.startsWith('\`\`\`')) {
-    cleaned = cleaned.replace(/^\`\`\`(?:markdown)?\n/, '').replace(/\n\`\`\`$/, '');
+  if (cleaned.startsWith('```markdown') || cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:markdown)?\n/, '').replace(/\n```$/, '');
   }
 
   return cleaned.trim();
@@ -1466,6 +1466,44 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         }
       }
       return JSON.stringify({ prefix, destroyed, count: destroyed.length });
+    }
+    case 'soul_preview': {
+      const desc = args.description as string;
+      const roleStr = args.role as string;
+      const styleStr = args.style as string | undefined;
+
+      const content = await generateSoulContent(desc, roleStr, styleStr);
+      return JSON.stringify({ content, preview: true });
+    }
+    case 'soul_create': {
+      const soulName = args.name as string;
+      const desc = args.description as string;
+      const roleStr = args.role as string;
+      const styleStr = args.style as string | undefined;
+
+      // Validate name
+      if (!/^[a-zA-Z0-9-]+$/.test(soulName)) {
+        return JSON.stringify({ error: 'name must be alphanumeric with hyphens only' });
+      }
+
+      const soulsDir = path.join(process.cwd(), 'souls');
+      if (!fs.existsSync(soulsDir)) {
+        fs.mkdirSync(soulsDir, { recursive: true });
+      }
+
+      const soulPath = path.join(soulsDir, `${soulName}.md`);
+      if (fs.existsSync(soulPath)) {
+        return JSON.stringify({ error: `Soul "${soulName}" already exists` });
+      }
+
+      // Generate soul content
+      const content = await generateSoulContent(desc, roleStr, styleStr);
+
+      // Save to file
+      fs.writeFileSync(soulPath, content, 'utf-8');
+      console.log(`[CMD] Soul "${soulName}" created via AI generation`);
+
+      return JSON.stringify({ success: true, name: soulName, path: soulPath, preview: content.slice(0, 300) });
     }
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
