@@ -1728,30 +1728,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       const query = args.query as string;
       if (!query) return JSON.stringify({ error: 'query is required' });
 
-      // Try Z.AI webSearchPrime MCP first (best results)
-      try {
-        const result = await mcpHub.callTool({
-          toolName: 'webSearchPrime',
-          arguments: { search_query: query, location: 'us', content_size: 'high' },
-          botName: 'commander',
-        });
-        const text = result.content
-          .filter(c => c.type === 'text' && c.text)
-          .map(c => c.text)
-          .join('\n');
-        // Check for actual content — Z.AI returns "[]" or empty strings when no results
-        const cleaned = text.replace(/^["'\s[\]]+$/g, '').trim();
-        if (cleaned && cleaned.length > 10) {
-          console.log(`[web_search] Z.AI webSearchPrime returned ${cleaned.length} chars for "${query}"`);
-          return JSON.stringify({ source: 'z-ai-search', query, content: cleaned.slice(0, 10000) });
-        } else {
-          console.log(`[web_search] Z.AI webSearchPrime returned empty/minimal for "${query}", falling through to MiniMax`);
-        }
-      } catch (e) {
-        console.error('[web_search] Z.AI webSearchPrime failed:', e instanceof Error ? e.message : String(e));
-      }
-
-      // Fallback: MiniMax Coding Plan Search (~1s latency)
+      // Primary: MiniMax Coding Plan Search (~1s latency, most reliable)
       const minimaxKey = process.env.MINIMAX_API_KEY;
       if (minimaxKey) {
         try {
@@ -1793,7 +1770,27 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         }
       }
 
-      // Fallback: GLM web_search tool (uses coding plan key, ~10s latency)
+      // Fallback 2: Z.AI webSearchPrime MCP (often returns empty, but worth trying)
+      try {
+        const result = await mcpHub.callTool({
+          toolName: 'webSearchPrime',
+          arguments: { search_query: query, location: 'us', content_size: 'high' },
+          botName: 'commander',
+        });
+        const text = result.content
+          .filter(c => c.type === 'text' && c.text)
+          .map(c => c.text)
+          .join('\n');
+        const cleaned = text.replace(/^["'\s[\]]+$/g, '').trim();
+        if (cleaned && cleaned.length > 10) {
+          console.log(`[web_search] Z.AI webSearchPrime returned ${cleaned.length} chars for "${query}"`);
+          return JSON.stringify({ source: 'z-ai-search', query, content: cleaned.slice(0, 10000) });
+        }
+      } catch (e) {
+        console.error('[web_search] Z.AI webSearchPrime failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      // Fallback 3: GLM web_search tool (uses coding plan key, ~10s latency)
       const glmKey = process.env.GLM_CODING_API_KEY || process.env.OPENAI_API_KEY;
       const glmBase = process.env.GLM_CODING_API_BASE || 'https://api.z.ai/api/coding/paas/v4';
       if (glmKey) {
@@ -1835,47 +1832,60 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
 
       console.log(`[fetch_url] Fetching: ${url}`);
 
-      // Try Z.AI web-reader MCP first
-      try {
-        const result = await mcpHub.callTool({
-          toolName: 'webReader',
-          arguments: { url },
-          botName: 'commander',
-        });
+      // Race web-reader MCP vs raw fetch — whoever returns first wins
+      const webReaderPromise = mcpHub.callTool({
+        toolName: 'webReader',
+        arguments: { url },
+        botName: 'commander',
+      }).then(result => {
         const text = result.content
           .filter(c => c.type === 'text' && c.text)
           .map(c => c.text)
           .join('\n');
-        if (text) {
+        if (text && text.length > 50) {
           console.log(`[fetch_url] web-reader returned ${text.length} chars`);
-          return JSON.stringify({ source: 'z-ai-web-reader', url, content: text.slice(0, 12000) });
+          return { source: 'z-ai-web-reader', url, content: text.slice(0, 12000) };
         }
-      } catch (e) {
+        throw new Error('web-reader returned empty');
+      }).catch(e => {
         console.error('[fetch_url] web-reader failed:', e instanceof Error ? e.message : String(e));
-      }
+        throw e;
+      });
 
-      // Fallback: basic fetch with text extraction
+      const rawFetchPromise = fetch(url, {
+        headers: { 'User-Agent': 'PicoArmy/1.0' },
+        signal: AbortSignal.timeout(8000),
+      }).then(async resp => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const html = await resp.text();
+        const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        console.log(`[fetch_url] raw fetch returned ${text.length} chars`);
+        return { source: 'raw-fetch', url, content: text.slice(0, 12000) };
+      });
+
       try {
-        const resp = await fetch(url, {
-          headers: { 'User-Agent': 'PicoArmy/1.0' },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (resp.ok) {
-          const html = await resp.text();
-          // Strip HTML tags for rough text extraction
-          const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          console.log(`[fetch_url] raw fetch returned ${text.length} chars`);
-          return JSON.stringify({ source: 'raw-fetch', url, content: text.slice(0, 12000) });
+        // Try web-reader first, but if it takes too long, raw fetch wins
+        const result = await Promise.any([
+          webReaderPromise,
+          // Give web-reader 6s head start, then raw fetch races
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('web-reader timeout')), 6000))
+            .catch(() => rawFetchPromise),
+        ]);
+        return JSON.stringify(result);
+      } catch {
+        // Both failed — try raw fetch directly as last resort
+        try {
+          const result = await rawFetchPromise;
+          return JSON.stringify(result);
+        } catch (e) {
+          console.error('[fetch_url] all methods failed:', e instanceof Error ? e.message : String(e));
+          return JSON.stringify({ error: 'Failed to fetch URL', url });
         }
-      } catch (e) {
-        console.error('[fetch_url] raw fetch failed:', e instanceof Error ? e.message : String(e));
       }
-
-      return JSON.stringify({ error: 'Failed to fetch URL', url });
     }
     case 'mcp_call': {
       const toolName = args.tool_name as string;
@@ -1965,6 +1975,19 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         timestamp: new Date().toISOString(),
       });
 
+      // Broadcast ephemeral bot cards so they appear on the fleet dashboard
+      const swarmBotIds: string[] = [];
+      for (const botDef of botDefs) {
+        const botId = `swarm-${Date.now()}-${botDef.role}`;
+        swarmBotIds.push(botId);
+        broadcastSSE('fleet:spawn', {
+          id: botId, name: `swarm:${botDef.role}`, soul_name: 'swarm-agent',
+          status: 'spawning', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, task: task.slice(0, 100), provider: botDef.provider || 'groq-scout' },
+        });
+      }
+
       const pipeline: Array<{ role: string; provider: string; model: string; tokens: number; output_preview: string }> = [];
       let previousOutput = '';
 
@@ -2000,6 +2023,13 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         }
 
         console.log(`[swarm] ${botDef.role} (${providerName}/${model}) — processing...`);
+        // Update fleet card to 'online' while processing
+        broadcastSSE('fleet:update', {
+          id: swarmBotIds[idx], name: `swarm:${botDef.role}`, status: 'online',
+          soul_name: 'swarm-agent', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, provider: providerName, model },
+        });
         broadcastSSE('log:entry', {
           id: `log-${Date.now()}`, bot_name: `swarm:${botDef.role}`, level: 'info',
           message: `📤 ${botDef.role} working...`,
@@ -2038,6 +2068,14 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
           message: `📥 ${botDef.role} done (${tokens} tok): ${output.slice(0, 80)}...`,
           timestamp: new Date().toISOString(),
         });
+        // Mark bot as idle, then remove from dashboard after delay
+        broadcastSSE('fleet:update', {
+          id: swarmBotIds[idx], name: `swarm:${botDef.role}`, status: 'idle',
+          soul_name: 'swarm-agent', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, done: true, tokens, provider: providerName },
+        });
+        setTimeout(() => broadcastSSE('fleet:destroy', { id: swarmBotIds[idx] }), 10_000);
 
         previousOutput = output;
         pipeline.push({
@@ -2083,6 +2121,28 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         timestamp: new Date().toISOString(),
       });
 
+      // Broadcast ephemeral bot cards for MoA proposers + aggregator
+      const moaBotIds: string[] = [];
+      const moaBaseTs = Date.now();
+      for (let i = 0; i < proposerCount; i++) {
+        const botId = `moa-${moaBaseTs}-p${i + 1}`;
+        moaBotIds.push(botId);
+        broadcastSSE('fleet:spawn', {
+          id: botId, name: `moa:proposer-${i + 1}`, soul_name: 'moa-proposer',
+          status: 'spawning', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, moa: true, provider: providerNames[i % providerNames.length] },
+        });
+      }
+      const aggBotId = `moa-${moaBaseTs}-agg`;
+      moaBotIds.push(aggBotId);
+      broadcastSSE('fleet:spawn', {
+        id: aggBotId, name: 'moa:aggregator', soul_name: 'moa-aggregator',
+        status: 'spawning', is_permanent: false, ttl_seconds: null,
+        last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+        metadata: { swarm: true, moa: true, provider: aggregatorProvider },
+      });
+
       type LayerResponse = { provider: string; model: string; output: string; tokens: number };
       const allLayerResponses: LayerResponse[][] = []; // [layer][proposer]
 
@@ -2094,6 +2154,15 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       // ── Layer Loop ──
       for (let layer = 0; layer < layerCount; layer++) {
         console.log(`[MoA] Layer ${layer + 1}/${layerCount} — firing ${proposerCount} proposers in parallel...`);
+        // Update proposer fleet cards to 'online'
+        for (let i = 0; i < proposerCount; i++) {
+          broadcastSSE('fleet:update', {
+            id: moaBotIds[i], name: `moa:proposer-${i + 1}`, status: 'online',
+            soul_name: 'moa-proposer', is_permanent: false, ttl_seconds: null,
+            last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+            metadata: { swarm: true, moa: true, layer: layer + 1, provider: providerNames[i % providerNames.length] },
+          });
+        }
         broadcastSSE('log:entry', {
           id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
           message: `🔄 Layer ${layer + 1}/${layerCount} — ${proposerCount} proposers working...`,
@@ -2188,8 +2257,27 @@ CRITICAL RULES:
         });
       }
 
+      // Mark proposers as idle, then remove after delay
+      for (let i = 0; i < proposerCount; i++) {
+        broadcastSSE('fleet:update', {
+          id: moaBotIds[i], name: `moa:proposer-${i + 1}`, status: 'idle',
+          soul_name: 'moa-proposer', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, moa: true, done: true },
+        });
+        const capturedId = moaBotIds[i];
+        setTimeout(() => broadcastSSE('fleet:destroy', { id: capturedId }), 10_000);
+      }
+
       // ── Aggregation ──
       console.log(`[MoA] Aggregating final layer responses...`);
+      // Set aggregator card to online
+      broadcastSSE('fleet:update', {
+        id: aggBotId, name: 'moa:aggregator', status: 'online',
+        soul_name: 'moa-aggregator', is_permanent: false, ttl_seconds: null,
+        last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+        metadata: { swarm: true, moa: true, provider: aggregatorProvider },
+      });
       broadcastSSE('log:entry', {
         id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
         message: `🎯 Aggregating final responses...`,
@@ -2244,6 +2332,14 @@ CRITICAL RULES:
         const totalTokens = allLayerResponses.flat().reduce((sum, r) => sum + r.tokens, 0) + aggTokens;
 
         console.log(`[MoA] Aggregation complete (${aggTokens} tokens). Total: ${totalTokens} tokens`);
+        // Mark aggregator idle, remove after delay
+        broadcastSSE('fleet:update', {
+          id: aggBotId, name: 'moa:aggregator', status: 'idle',
+          soul_name: 'moa-aggregator', is_permanent: false, ttl_seconds: null,
+          last_heartbeat: new Date().toISOString(), created_at: new Date().toISOString(),
+          metadata: { swarm: true, moa: true, done: true },
+        });
+        setTimeout(() => broadcastSSE('fleet:destroy', { id: aggBotId }), 10_000);
         broadcastSSE('log:entry', {
           id: `log-${Date.now()}`, bot_name: 'moa', level: 'info',
           message: `✅ MoA complete: ${layerCount}L × ${proposerCount}P → aggregated (${totalTokens} tokens)`,

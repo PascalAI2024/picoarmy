@@ -1,10 +1,30 @@
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+
+// ── Z.AI JWT Helper ─────────────────────────────────────────────
+// Z.AI HTTP MCP endpoints require a JWT token, not the raw API key.
+// Key format: {api_key_id}.{secret} → generate HS256 JWT with 24h expiry.
+function generateZaiJwt(apiKey: string): string | null {
+  const parts = apiKey.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const [id, secret] = parts;
+
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', sign_type: 'SIGN' })).toString('base64url');
+  const now = Date.now();
+  const payload = Buffer.from(JSON.stringify({
+    api_key: id,
+    exp: now + 86_400_000, // 24h in ms (Z.AI uses ms timestamps)
+    timestamp: now,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret!).update(`${header}.${payload}`).digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -142,6 +162,16 @@ export class MCPHub extends EventEmitter {
           conn.status = 'disconnected';
           conn.error = 'API key not configured';
           return;
+        }
+
+        // Z.AI HTTP MCP endpoints need JWT, not raw API key
+        if (authHeader && config.url?.includes('z.ai/api/mcp/')) {
+          const rawKey = authHeader.replace('Bearer ', '');
+          const jwt = generateZaiJwt(rawKey);
+          if (jwt) {
+            headers['Authorization'] = `Bearer ${jwt}`;
+            console.log(`[MCP] Generated JWT for "${name}" (Z.AI HTTP MCP)`);
+          }
         }
 
         conn.transport = new StreamableHTTPClientTransport(

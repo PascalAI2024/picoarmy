@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Send, Bot, ChevronDown, ChevronRight, Wrench, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { X, Send, Bot, ChevronDown, ChevronRight, Wrench, Loader2, Zap } from 'lucide-react';
 import { chatWithCommander } from '../../lib/api';
+import { useTelemetryStore } from '../../stores/telemetry';
 import type { CommanderChatMessage, CommanderToolCall } from '../../lib/types';
 
 interface CommanderChatProps {
@@ -82,6 +83,38 @@ function ToolCallItem({ tc }: { tc: CommanderToolCall }) {
   );
 }
 
+function SwarmActivity() {
+  const logs = useTelemetryStore((s) => s.logs);
+
+  // Filter to only swarm/moa log entries from the last 2 minutes
+  const swarmLogs = useMemo(() => {
+    const cutoff = Date.now() - 120_000;
+    return logs.filter(
+      (l) =>
+        (l.bot_name === 'swarm' || l.bot_name === 'moa' || l.bot_name?.startsWith('swarm:')) &&
+        new Date(l.timestamp).getTime() > cutoff
+    );
+  }, [logs]);
+
+  if (swarmLogs.length === 0) return null;
+
+  return (
+    <div className="space-y-1 animate-in fade-in">
+      {swarmLogs.slice(-8).map((log) => (
+        <div
+          key={log.id}
+          className="flex items-start gap-1.5 px-2 py-1 rounded-sm bg-accent-cyan/5 border border-accent-cyan/10"
+        >
+          <Zap className="h-3 w-3 text-accent-cyan shrink-0 mt-0.5" />
+          <span className="text-[11px] text-text-secondary mono-data leading-tight">
+            {log.message}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function CommanderChat({ open, onClose }: CommanderChatProps) {
   const [messages, setMessages] = useState<CommanderChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -144,15 +177,9 @@ export function CommanderChat({ open, onClose }: CommanderChatProps) {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Side panel — no backdrop, slides from right */}
       <div
-        className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <div
-        className="fixed top-0 right-0 z-50 h-full w-full max-w-[420px] flex flex-col bg-bg-surface border-l border-border shadow-2xl"
+        className="fixed top-0 right-0 z-40 h-full w-full max-w-[420px] flex flex-col bg-bg-surface border-l border-border shadow-2xl"
         style={{ animation: 'slide-in-right 0.25s ease-out' }}
       >
         {/* Header */}
@@ -229,11 +256,15 @@ export function CommanderChat({ open, onClose }: CommanderChatProps) {
           ))}
 
           {loading && (
-            <div className="flex justify-start">
-              <div className="bg-bg-elevated border border-border rounded-sm px-3 py-2 flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 text-accent-cyan animate-spin" />
-                <span className="text-xs text-text-muted mono-data">thinking...</span>
+            <div className="space-y-2">
+              <div className="flex justify-start">
+                <div className="bg-bg-elevated border border-border rounded-sm px-3 py-2 flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 text-accent-cyan animate-spin" />
+                  <span className="text-xs text-text-muted mono-data">working...</span>
+                </div>
               </div>
+              {/* Live swarm/MoA activity feed */}
+              <SwarmActivity />
             </div>
           )}
 
