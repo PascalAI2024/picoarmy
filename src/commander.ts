@@ -1265,6 +1265,23 @@ const commanderTools = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'news_search',
+      description: 'Search current news headlines via NewsAPI. Returns structured articles with titles, descriptions, sources, and publish dates. Best for sports scores, breaking news, and current events — more reliable than web_search for time-sensitive queries.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search keywords (e.g. "NBA scores", "Premier League highlights")' },
+          category: { type: 'string', description: 'Category filter: sports, technology, business, entertainment, health, science, general. Default: general', enum: ['sports', 'technology', 'business', 'entertainment', 'health', 'science', 'general'] },
+          country: { type: 'string', description: 'Country code (e.g. "us", "gb"). Default: us' },
+          page_size: { type: 'number', description: 'Number of results (1-100, default 10)' },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // AI-generate a soul template using Commander's LLM
@@ -2245,6 +2262,78 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         return JSON.stringify({ error: `Aggregation error: ${msg}`, layers: allLayerResponses });
       }
     }
+    case 'news_search': {
+      const query = (args.query as string) || '';
+      const category = (args.category as string) || (query ? '' : 'general');
+      const country = (args.country as string) || 'us';
+      const pageSize = Math.min((args.page_size as number) || 10, 100);
+      const apiKey = process.env.NEWSAPI_KEY || '';
+
+      if (!apiKey) {
+        return JSON.stringify({ error: 'NEWSAPI_KEY not configured in environment' });
+      }
+
+      // Use /v2/top-headlines if category specified or no query, else /v2/everything
+      const useTopHeadlines = !!category || !query;
+      const baseUrl = useTopHeadlines
+        ? 'https://newsapi.org/v2/top-headlines'
+        : 'https://newsapi.org/v2/everything';
+
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      if (useTopHeadlines && category) params.set('category', category);
+      if (useTopHeadlines) params.set('country', country);
+      params.set('pageSize', String(pageSize));
+
+      const url = `${baseUrl}?${params.toString()}`;
+      console.log(`[news_search] Fetching: ${url}`);
+
+      try {
+        const resp = await fetch(url, {
+          headers: { 'X-Api-Key': apiKey },
+        });
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(`[news_search] API error ${resp.status}:`, errText.slice(0, 200));
+          return JSON.stringify({ error: `NewsAPI error ${resp.status}: ${errText.slice(0, 200)}` });
+        }
+
+        const data = await resp.json() as {
+          status: string;
+          totalResults: number;
+          articles: Array<{
+            source: { name: string };
+            title: string;
+            description: string;
+            url: string;
+            publishedAt: string;
+            content: string;
+          }>;
+        };
+
+        const articles = (data.articles || []).map(a => ({
+          source: a.source?.name,
+          title: a.title,
+          description: a.description,
+          url: a.url,
+          published: a.publishedAt,
+          content: a.content, // ~200 char truncated content from NewsAPI
+        }));
+
+        console.log(`[news_search] Got ${articles.length} articles (${data.totalResults} total)`);
+        return JSON.stringify({
+          query,
+          category: category || 'all',
+          total: data.totalResults,
+          articles,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[news_search] Error:', msg);
+        return JSON.stringify({ error: `news_search failed: ${msg}` });
+      }
+    }
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -2296,29 +2385,28 @@ app.post('/api/commander/chat', async (req: Request, res: Response) => {
 ## YOUR DEFAULT BEHAVIOR — ALWAYS USE THE SWARM
 You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS run a swarm to do the work.
 
-When a user asks ANYTHING that isn't fleet management or small talk, you MUST:
-1. web_search first (if the task needs real-world info)
-2. fetch_url — pick 1-2 of the most relevant URLs from search results and fetch their full content. This gives you REAL DATA, not just link titles.
-3. Choose your swarm tool:
-   - swarm_task for simple/linear tasks (summarize, format, extract)
-   - swarm_moa for complex/multi-faceted analysis (evaluate, compare, deep dive)
-4. Present the swarm's final result as your reply
+When a user asks ANYTHING that isn't fleet management or small talk, you MUST follow this EXACT 3-step pipeline:
 
-Both swarm tools do EVERYTHING in one call: generate souls/prompts, run LLM calls, return final output. No deploy, no cleanup needed.
+STEP 1: web_search({query: "..."}) — get search results (titles + snippets only)
+STEP 2: fetch_url({url: "..."}) — ALWAYS fetch 1-2 top URLs from the search results to get REAL page content. web_search alone is NOT enough.
+STEP 3: swarm_task or swarm_moa — pass the FULL fetch_url content as the "context" parameter.
 
-ONLY answer directly (without swarm) for:
+ALL THREE STEPS ARE MANDATORY. Never skip step 2 (fetch_url). Never summarize the data — pass the raw fetched content directly.
+
+OPTIONAL: news_search — if NEWSAPI_KEY is configured, use this for sports scores and breaking news (structured articles with dates). Falls back to web_search if unavailable.
+
+ONLY answer directly (without the pipeline) for:
 - "how many bots?" / "list bots" / "fleet status" → use fleet_list
 - "spawn X" / "destroy X" / "restart X" → fleet management tools
 - "hi" / "hello" / greetings → short greeting
 
-EVERYTHING ELSE = web_search → fetch_url (1-2 URLs) → swarm tool (task or moa) → present result.
-web_search only returns link titles/snippets — NOT enough data. You MUST fetch_url to get actual content before passing to the swarm.
-You are the commander, not the worker. The swarm does the work.
+EVERYTHING ELSE = web_search → fetch_url → swarm tool → present result.
 
 ## CRITICAL RULES
-- NEVER make up information. NEVER fabricate data. Always use web_search for facts.
-- Pass the web_search results into swarm_task's context parameter. Keep it concise — extract the key data (titles, snippets, dates) rather than dumping raw JSON. This helps the swarm bots focus on real data.
-- web_search returns link titles and snippets, NOT full page content. If the snippets don't contain enough detail, use fetch_url on 1-2 top URLs to get actual content.
+- NEVER make up information. NEVER fabricate data. Always use web_search + fetch_url for facts.
+- ALWAYS call fetch_url after web_search. Search snippets are NOT enough data. You need the actual page content.
+- Call fetch_url on 2 URLs for best results. Pick content-rich aggregator sites (Yahoo Sports, ESPN, CBS Sports, Bleacher Report) over single-league sites (nfl.com, nba.com) — league sites are JS-heavy and often return empty templates.
+- Pass the FULL fetch_url content as the swarm's "context" parameter. Do NOT summarize or extract — pass the raw text. The swarm bots need the full data to give good answers.
 - Present the swarm's result directly. Don't describe the pipeline process to the user.
 - If the swarm says "data not available" or similar, relay that honestly — never override with fabricated data.
 - Be concise and action-oriented.
@@ -2404,7 +2492,7 @@ CHOOSING BETWEEN THEM:
 - Need speed → swarm_task (sequential is faster)
 - Need depth → swarm_moa (parallel proposers cover more angles)
 
-IMPORTANT: Always pass web_search results as the "context" parameter. Both tools use it for grounding.
+IMPORTANT: Always pass the FULL fetch_url content as the "context" parameter. This is real page data, not just search snippets. Both tools use it for grounding — without it, the swarm has nothing to work with.
 
 ## Dynamic Teams (deploy_team)
 Use deploy_team to create custom persistent bot teams for any task. YOU design the team:
@@ -2422,24 +2510,30 @@ When to use which:
 ## Swarm Templates (Pre-built)
 swarm_deploy uses pre-built JSON templates for common team types. Use swarm_list to see available templates.
 
-## Web Search
-You have a built-in web_search tool for real-time information. Use it for news, research, current events.
+## Web Search + URL Selection
+You have web_search and fetch_url tools for real-time information.
+
+IMPORTANT URL SELECTION TIPS:
+- For sports scores: prefer sports.yahoo.com (best structured data), espn.com, or bleacherreport.com
+- AVOID single-league sites (nfl.com, nba.com, mlb.com) — they are JS-heavy SPAs that return empty templates when fetched
+- AVOID thescore.com — returns minimal content
+- For news: prefer reuters.com, apnews.com, bbc.com (clean text content)
+- Always pick URLs that are likely to have server-rendered HTML with actual content
 
 ## MCP Tools (Vision, Media)
 Use mcp_list to see available tools. These include:
 - Image/video analysis via Z.AI vision tools
 - TTS, image/video/music generation via MiniMax (if connected)
 
-## Pipeline Flow (THIS IS YOUR MAIN LOOP)
+## Pipeline Flow (THIS IS YOUR MAIN LOOP — FOLLOW EXACTLY)
 For ANY substantive user request:
 
-1. web_search({query: "..."}) — get real data
-2. Choose swarm tool based on complexity:
-   - swarm_task for linear tasks
-   - swarm_moa for multi-perspective analysis
-3. YOUR REPLY = the swarm's "result" field. Present it directly. Don't describe the process.
+1. web_search({query: "..."}) — get search results
+2. fetch_url({url: "best URL from search"}) — get FULL page content. THIS STEP IS MANDATORY.
+3. swarm_task or swarm_moa — pass fetch_url content as "context"
+4. YOUR REPLY = the swarm's "result" field. Present it directly.
 
-That's it. Two tool calls. web_search → swarm tool → reply.`;
+Three tool calls minimum. web_search → fetch_url → swarm tool → reply. NEVER skip fetch_url.`;
 
     // Build messages
     conversationHistory = [

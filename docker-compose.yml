@@ -70,6 +70,7 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-}
       COMMANDER_PROVIDER: ${COMMANDER_PROVIDER:-groq-qwen}
       COMMANDER_MODEL: ${COMMANDER_MODEL:-qwen/qwen3-32b}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
     volumes:
       - ./src:/app/src
       - ./souls:/app/souls
