@@ -105,7 +105,36 @@ Express server at `:4000`. Serves dashboard static files AND the REST/SSE API.
 | POST | `/api/tools/:name/call` | Execute MCP tool (body: `{arguments, bot_name}`) |
 | GET | `/api/mcp/status` | MCP hub connection status per server |
 | GET | `/api/sse` | SSE stream (fleet + log + MCP events) |
+| POST | `/api/commander/chat` | Meta chat — LLM orchestrator with fleet tools |
 | GET | `*` | Dashboard static files (SPA fallback) |
+
+### Commander Chat (Meta AI)
+
+The `/api/commander/chat` endpoint is the meta AI orchestrator. It uses an LLM (configurable via `COMMANDER_PROVIDER`/`COMMANDER_MODEL`) with tool calling to manage the fleet.
+
+**Commander Tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `fleet_list` | List all bots with status |
+| `fleet_spawn` | Spawn a permanent bot |
+| `fleet_destroy` | Destroy a bot |
+| `bot_task` | Send a task to a specific bot and get result |
+| `swarm_task` | Run a full swarm pipeline (primary tool) |
+| `swarm_deploy` | Deploy pre-built swarm template |
+| `swarm_destroy` | Destroy a swarm by prefix |
+| `web_search` | Real-time web search (MiniMax + GLM fallback) |
+| `mcp_list` | List available MCP tools |
+| `mcp_call` | Call an MCP tool |
+| `soul_generate` | AI-generate a soul template |
+
+**Swarm Pipeline (`swarm_task`)** — the primary tool for any substantive task:
+1. Commander LLM calls `web_search` to get real data
+2. Commander calls `swarm_task` with context + bot pipeline definition
+3. `swarm_task` generates AI souls per role, chains LLM calls sequentially (each bot gets previous bot's output), returns final result
+4. No processes spawned, no DB records, no cleanup needed — pure LLM orchestration
+
+**Soul Generation** — `generateSoulContent()` uses 8 proven prompting techniques: role anchoring, behavioral constraints, few-shot tone calibration, chain-of-thought directives, tool-aware instructions, memory protocol, escalation rules, anti-patterns.
 
 ### SSE Events
 
@@ -116,7 +145,7 @@ Express server at `:4000`. Serves dashboard static files AND the REST/SSE API.
 | `fleet:spawn` | `Bot` | Bot spawned |
 | `fleet:destroy` | `{id}` | Bot destroyed |
 | `fleet:crash` | `{id, name, reason}` | Bot process crashed |
-| `log:entry` | `LogEntry` | Process stdout/stderr |
+| `log:entry` | `LogEntry` | Process stdout/stderr + swarm pipeline events |
 | `mcp:tool-called` | `{tool, bot, args}` | MCP tool executed |
 | `mcp:tool-error` | `{tool, error}` | MCP tool failed |
 | `mcp:tool-denied` | `{tool, bot, reason}` | Scope violation |
@@ -348,11 +377,14 @@ Two access modes per provider: **Regular API** (pay-per-token) and **Coding Plan
 
 | Tier | Provider / Model | Cost | Use For |
 |------|-----------------|------|---------|
+| **Free (Groq)** | Llama 4 Scout 17B | $0 (500K/day) | Default for swarm bots |
+| **Free (Groq)** | Llama 4 Maverick 17B | $0 (500K/day) | Multilingual bots |
+| **Free (Groq)** | Kimi K2 Instruct | $0 (300K/day) | Deep reasoning/analysis |
+| **Free (Groq)** | Qwen3 32B | $0 (500K/day) | Burst workloads |
 | **Free** | Zhipu GLM-4.7-Flash | $0 (unlimited) | Heartbeats, idle chat |
 | **Coding Plan** | GLM-4.7 via z.ai | ~$3-15/mo | Standard bots |
 | **Coding Plan** | MiniMax M2.1 via /anthropic | ~$10-50/mo | Active bots |
 | **Pay-per-token** | MiniMax M2/M2.5 | $0.255-0.30/1M in | Overflow/burst |
-| **Pay-per-token** | Claude Haiku 3.5 | $0.80/$4.00/1M | Tool use, complex |
 
 ### API Endpoints
 
@@ -404,10 +436,14 @@ picoarmy/
 │       │   ├── lib/            # api.ts, types.ts, format.ts
 │       │   └── theme/          # tokens.css (design tokens, animations)
 │       └── package.json
-├── souls/                      # Soul templates (deployed to bots on spawn)
-│   ├── assistant.md
-│   ├── seo-writer.md
-│   └── support-agent.md
+├── souls/                      # Soul templates (static + AI-generated)
+│   ├── assistant.md            # General assistant
+│   ├── seo-writer.md           # SEO content writer
+│   ├── support-agent.md        # Customer support
+│   ├── news-analyst.md         # News analysis (AI-generated)
+│   └── customer-support-bot.md # E-commerce support (AI-generated)
+├── swarms/                     # Pre-built swarm templates (JSON)
+│   └── research-team.json      # Research pipeline template
 ├── package.json
 └── tsconfig.json
 ```
