@@ -1983,7 +1983,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         // Generate soul for this role — skip expensive generation, use direct instructions
         // Soul generation adds latency and doesn't improve quality for pipeline bots
         const today = new Date().toISOString().split('T')[0];
-        const soulContent = `You are a ${botDef.role}. ${botDef.task}\n\nToday's date: ${today}\nYou are part of a swarm pipeline working on: ${task}\n\nRULES:\n- ONLY use information from the source data provided. The source data is CURRENT and from the web.\n- NEVER use your training data for facts, dates, events, or statistics. Your training data is OUTDATED.\n- If the source data does not contain certain information, say "not available in source data" — NEVER fill gaps from memory.\n- All dates, scores, names, and facts MUST come from the source data.\n- Be concise and factual.`;
+        const soulContent = `You are a ${botDef.role}. ${botDef.task}\n\nToday's date: ${today}\nYou are part of a swarm pipeline working on: ${task}\n\nRULES:\n- ONLY use information from the source data provided. The source data is CURRENT and from the web.\n- NEVER use your training data for facts, dates, events, or statistics. Your training data is OUTDATED.\n- If the source data does not contain certain information, say "not available in source data" — NEVER fill gaps from memory.\n- NEVER invent specific numbers, citations, report names, dollar amounts, or quotes not in the source data.\n- All dates, scores, names, and facts MUST come from the source data.\n- Be concise and factual.`;
 
         // Build the prompt with grounding instructions
         const groundingRule = context
@@ -2130,7 +2130,8 @@ CRITICAL RULES:
 - ONLY use information from the Source Data provided in the user message. The source data contains REAL, CURRENT information from the web.
 - NEVER use your training data for facts, dates, events, or statistics. Your training data is OUTDATED.
 - If the source data does not contain certain information, say "not available in source data" — NEVER fill gaps from memory.
-- All dates, scores, names, and facts MUST come from the source data, not your pre-training.
+- All dates, scores, names, statistics, dollar amounts, and facts MUST come from the source data, not your pre-training.
+- NEVER invent specific numbers, citations, report names, or quotes that aren't in the source data. If you need a detail that isn't there, omit it rather than fabricate it.
 - Provide a thoughtful, well-reasoned response based SOLELY on the provided source data.
 - If refining previous responses, identify strengths and weaknesses, then synthesize an improved answer.`;
 
