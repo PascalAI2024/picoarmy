@@ -1,4 +1,4 @@
-import { Command, Menu } from 'lucide-react';
+import { Command, Menu, Bot } from 'lucide-react';
 import { StatusLED } from '../ui/StatusLED';
 import { useEffect, useState } from 'react';
 import { useFleetStore } from '../../stores/fleet';
@@ -7,10 +7,11 @@ interface TopBarProps {
   sseConnected: boolean;
   sseError: string | null;
   onCommandBarOpen: () => void;
+  onCommanderChatOpen: () => void;
   onMobileMenuToggle?: () => void;
 }
 
-export function TopBar({ sseConnected, sseError, onCommandBarOpen, onMobileMenuToggle }: TopBarProps) {
+export function TopBar({ sseConnected, sseError, onCommandBarOpen, onCommanderChatOpen, onMobileMenuToggle }: TopBarProps) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const bots = useFleetStore((state) => state.bots);
   const fleetStats = {
@@ -84,6 +85,23 @@ export function TopBar({ sseConnected, sseError, onCommandBarOpen, onMobileMenuT
               {sseConnected ? 'LIVE' : 'DISCONNECTED'}
             </span>
           </div>
+
+          {/* Commander AI chat trigger */}
+          <button
+            onClick={onCommanderChatOpen}
+            className="
+              flex items-center gap-2
+              px-3 py-1.5
+              bg-accent-cyan/5 hover:bg-accent-cyan/10
+              border border-accent-cyan/20 hover:border-accent-cyan/40
+              text-accent-cyan
+              transition-all
+            "
+            title="Open Fleet Commander AI"
+          >
+            <Bot className="h-3.5 w-3.5" />
+            <span className="mono-data text-xs">AI</span>
+          </button>
 
           {/* Command bar trigger */}
           <button

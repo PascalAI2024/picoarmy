@@ -913,6 +913,577 @@ You are **${bot.name}**, a bot in the PicoArmy fleet. You are powered by **${(bo
   }
 });
 
+// ── Commander Meta Chat ──────────────────────────────────────────
+
+// Reusable helpers for tool execution (shared between REST routes & commander chat)
+async function getEnrichedBots() {
+  const dbBots = await apiClient.getBots();
+  const fleetStatus = processManager.getFleetStatus();
+  return dbBots.map((dbBot) => {
+    const processInfo = fleetStatus.bots.find((p) => p.name === dbBot.name);
+    return {
+      ...dbBot,
+      pid: processInfo?.pid ?? null,
+      status: processInfo?.status ?? dbBot.status,
+      uptime_seconds: processInfo?.uptime ?? dbBot.uptime_seconds,
+      memory_mb: processInfo?.memoryMb ?? dbBot.memory_mb,
+      restart_count: processInfo?.restartCount ?? 0,
+    };
+  });
+}
+
+// OpenAI function calling tool definitions for commander chat
+const commanderTools = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fleet_list',
+      description: 'List all bots in the fleet with their current status, uptime, and memory usage',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fleet_spawn',
+      description: 'Spawn a new bot in the fleet',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Unique bot name (alphanumeric + hyphens)' },
+          soul_name: { type: 'string', description: 'Soul template to deploy (e.g. assistant, seo-writer, support-agent)' },
+          provider: { type: 'string', description: 'LLM provider preset (e.g. groq, glm-flash, minimax)' },
+          is_permanent: { type: 'boolean', description: 'Whether the bot persists across restarts (default: true)' },
+        },
+        required: ['name', 'soul_name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fleet_destroy',
+      description: 'Destroy/remove a bot from the fleet by name',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the bot to destroy' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fleet_restart',
+      description: 'Restart a bot by name (kills process and respawns)',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name of the bot to restart' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fleet_status',
+      description: 'Get detailed process manager status (PIDs, health, memory per bot)',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'soul_list',
+      description: 'List available soul templates that can be deployed to bots',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'soul_deploy',
+      description: 'Deploy a soul template to a specific bot',
+      parameters: {
+        type: 'object',
+        properties: {
+          bot_name: { type: 'string', description: 'Name of the bot' },
+          soul_name: { type: 'string', description: 'Soul template name to deploy' },
+        },
+        required: ['bot_name', 'soul_name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'skill_list',
+      description: 'List available skills that can be deployed to bots',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'skill_deploy',
+      description: 'Deploy a skill to a specific bot',
+      parameters: {
+        type: 'object',
+        properties: {
+          bot_name: { type: 'string', description: 'Name of the bot' },
+          skill_name: { type: 'string', description: 'Skill name to deploy' },
+        },
+        required: ['bot_name', 'skill_name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'provider_list',
+      description: 'List available LLM provider presets with their models and configuration status',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'swarm_list',
+      description: 'List available swarm templates (pre-configured bot groups with different models per role)',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'swarm_deploy',
+      description: 'Deploy a swarm — spawns a coordinated group of bots from a template, each with the right model for their role',
+      parameters: {
+        type: 'object',
+        properties: {
+          swarm_name: { type: 'string', description: 'Swarm template name (e.g. seo-team, support-team, research-team)' },
+          client_id: { type: 'string', description: 'Optional client ID to scope all bots (e.g. acme)' },
+          name_prefix: { type: 'string', description: 'Optional name prefix for all bots (default: swarm name)' },
+        },
+        required: ['swarm_name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'swarm_destroy',
+      description: 'Destroy all bots in a swarm by their shared name prefix',
+      parameters: {
+        type: 'object',
+        properties: {
+          name_prefix: { type: 'string', description: 'Name prefix of the swarm bots to destroy (e.g. seo-team)' },
+        },
+        required: ['name_prefix'],
+      },
+    },
+  },
+];
+
+// Execute a commander tool call
+async function executeCommanderTool(name: string, args: Record<string, unknown>): Promise<string> {
+  switch (name) {
+    case 'fleet_list': {
+      const bots = await getEnrichedBots();
+      return JSON.stringify(bots.map(b => ({
+        id: b.id, name: b.name, status: b.status, soul: b.soul_name,
+        provider: b.metadata?.provider || 'default',
+        uptime_s: b.uptime_seconds, memory_mb: b.memory_mb,
+        permanent: b.is_permanent, pid: b.pid,
+      })));
+    }
+    case 'fleet_spawn': {
+      const spawnName = args.name as string;
+      const soulName = args.soul_name as string;
+      const provider = args.provider as string | undefined;
+      const isPermanent = args.is_permanent !== false;
+
+      const dbBot = await apiClient.createBot({
+        name: spawnName, soul_name: soulName,
+        is_permanent: isPermanent,
+      });
+
+      const preset = provider ? resolveProvider(provider) : undefined;
+      const config: BotConfig = {
+        name: spawnName, soulName, isPermanent, ttlSeconds: null,
+        openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+        openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
+        model: preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash',
+        telegramBotToken: '', telegramAllowFrom: '', workspaceDir: '',
+      };
+      if (provider) config.providerPreset = provider;
+
+      try { await processManager.spawnBot(config); } catch (e) {
+        console.warn(`[CMD Chat] Spawn process failed for "${spawnName}":`, e);
+      }
+      broadcastSSE('fleet:spawn', dbBot);
+      return JSON.stringify({ success: true, bot: { id: dbBot.id, name: spawnName, soul: soulName } });
+    }
+    case 'fleet_destroy': {
+      const botName = args.name as string;
+      const dbBots = await apiClient.getBots();
+      const bot = dbBots.find(b => b.name === botName);
+      if (!bot) return JSON.stringify({ error: `Bot "${botName}" not found` });
+
+      try { await processManager.destroyBot(botName); } catch { /* ok */ }
+      await apiClient.deleteBot(bot.id);
+      broadcastSSE('fleet:destroy', { id: bot.id });
+      return JSON.stringify({ success: true, destroyed: botName });
+    }
+    case 'fleet_restart': {
+      const rName = args.name as string;
+      const dbBots = await apiClient.getBots();
+      const bot = dbBots.find(b => b.name === rName);
+      if (!bot) return JSON.stringify({ error: `Bot "${rName}" not found` });
+
+      try { await processManager.destroyBot(rName); } catch { /* ok */ }
+      const preset = bot.metadata?.provider ? resolveProvider(bot.metadata.provider as string) : undefined;
+      const rConfig: BotConfig = {
+        name: rName, soulName: bot.soul_name, isPermanent: bot.is_permanent,
+        ttlSeconds: bot.ttl_seconds ?? null,
+        openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+        openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
+        model: (bot.metadata?.model as string) || preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash',
+        telegramBotToken: (bot.metadata?.telegram_token as string) || '',
+        telegramAllowFrom: (bot.metadata?.telegram_allow_from as string) || '',
+        workspaceDir: '',
+      };
+      if (bot.metadata?.provider) rConfig.providerPreset = bot.metadata.provider as string;
+      if (bot.client_id) rConfig.clientId = bot.client_id;
+
+      try { await processManager.spawnBot(rConfig); } catch (e) {
+        console.warn(`[CMD Chat] Restart spawn failed for "${rName}":`, e);
+      }
+      return JSON.stringify({ success: true, restarted: rName });
+    }
+    case 'fleet_status': {
+      return JSON.stringify(processManager.getFleetStatus());
+    }
+    case 'soul_list': {
+      const soulsDir = path.join(process.cwd(), 'souls');
+      if (!fs.existsSync(soulsDir)) return JSON.stringify([]);
+      const souls = fs.readdirSync(soulsDir).filter(f => f.endsWith('.md')).map(f => {
+        const content = fs.readFileSync(path.join(soulsDir, f), 'utf-8');
+        const match = content.match(/^#\s+(.+)/m);
+        return { name: f.replace('.md', ''), description: match ? match[1] : f.replace('.md', '') };
+      });
+      return JSON.stringify(souls);
+    }
+    case 'soul_deploy': {
+      const botName = args.bot_name as string;
+      const soulName = args.soul_name as string;
+      const soulPath = path.join(process.cwd(), 'souls', `${soulName}.md`);
+      if (!fs.existsSync(soulPath)) return JSON.stringify({ error: `Soul "${soulName}" not found` });
+      const content = fs.readFileSync(soulPath, 'utf-8');
+      try { processManager.deploySoul(botName, content); } catch { /* ok */ }
+      return JSON.stringify({ success: true, deployed: soulName, to: botName });
+    }
+    case 'skill_list': {
+      const skillsDir = path.join(process.cwd(), 'skills');
+      if (!fs.existsSync(skillsDir)) return JSON.stringify([]);
+      const skills = fs.readdirSync(skillsDir).filter(f => {
+        return fs.statSync(path.join(skillsDir, f)).isDirectory();
+      }).map(name => {
+        const mdPath = path.join(skillsDir, name, 'SKILL.md');
+        let desc = name;
+        if (fs.existsSync(mdPath)) {
+          const c = fs.readFileSync(mdPath, 'utf-8');
+          const m = c.match(/^#\s+(.+)/m);
+          if (m?.[1]) desc = m[1];
+        }
+        return { name, description: desc };
+      });
+      return JSON.stringify(skills);
+    }
+    case 'skill_deploy': {
+      const botName = args.bot_name as string;
+      const skillName = args.skill_name as string;
+      const skillPath = path.join(process.cwd(), 'skills', skillName, 'SKILL.md');
+      if (!fs.existsSync(skillPath)) return JSON.stringify({ error: `Skill "${skillName}" not found` });
+      const content = fs.readFileSync(skillPath, 'utf-8');
+      try { processManager.deploySkill(botName, skillName, content); } catch (e) {
+        return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
+      }
+      return JSON.stringify({ success: true, deployed: skillName, to: botName });
+    }
+    case 'provider_list': {
+      const presets = getProviderPresets().map(p => ({
+        name: p.name, model: p.model, format: p.format,
+        description: p.description, configured: !!p.apiKey,
+      }));
+      return JSON.stringify(presets);
+    }
+    case 'swarm_list': {
+      const swarmsDir = path.join(process.cwd(), 'swarms');
+      if (!fs.existsSync(swarmsDir)) return JSON.stringify([]);
+      const swarms = fs.readdirSync(swarmsDir).filter(f => f.endsWith('.json')).map(f => {
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(swarmsDir, f), 'utf-8'));
+          return { name: data.name, description: data.description, botCount: data.bots?.length || 0, bots: data.bots };
+        } catch { return null; }
+      }).filter(Boolean);
+      return JSON.stringify(swarms);
+    }
+    case 'swarm_deploy': {
+      const swarmName = args.swarm_name as string;
+      const clientId = args.client_id as string | undefined;
+      const prefix = (args.name_prefix as string) || swarmName;
+      const swarmPath = path.join(process.cwd(), 'swarms', `${swarmName}.json`);
+      if (!fs.existsSync(swarmPath)) return JSON.stringify({ error: `Swarm template "${swarmName}" not found` });
+
+      const template = JSON.parse(fs.readFileSync(swarmPath, 'utf-8'));
+      const results: Array<{ name: string; role: string; soul: string; provider: string; status: string }> = [];
+
+      for (const bot of template.bots) {
+        const botName = `${prefix}-${bot.role}`;
+        const soulName = bot.soul || 'assistant';
+        const preset = resolveProvider(bot.provider);
+
+        try {
+          // Create DB record first (like fleet_spawn does)
+          const dbBot = await apiClient.createBot({
+            name: botName, soul_name: soulName, is_permanent: false,
+            ...(clientId ? { client_id: clientId } : {}),
+            metadata: { provider: bot.provider, swarm: swarmName, role: bot.role },
+          });
+
+          const botConfig: BotConfig = {
+            name: botName,
+            soulName,
+            isPermanent: false,
+            ttlSeconds: null,
+            openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+            openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
+            model: preset?.model || 'glm-4.7-flash',
+            telegramBotToken: '',
+            telegramAllowFrom: '',
+            workspaceDir: '',
+          };
+          if (bot.provider) botConfig.providerPreset = bot.provider;
+          if (clientId) botConfig.clientId = clientId;
+
+          await processManager.spawnBot(botConfig);
+          results.push({ name: botName, role: bot.role, soul: soulName, provider: bot.provider, status: 'spawned' });
+          broadcastSSE('fleet:spawn', dbBot);
+        } catch (e) {
+          results.push({ name: botName, role: bot.role, soul: soulName, provider: bot.provider, status: `error: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+      return JSON.stringify({ swarm: swarmName, prefix, bots: results });
+    }
+    case 'swarm_destroy': {
+      const prefix = args.name_prefix as string;
+      const dbBots = await apiClient.getBots();
+      const matching = dbBots.filter(b => b.name.startsWith(prefix));
+      if (matching.length === 0) return JSON.stringify({ error: `No bots found with prefix "${prefix}"`, destroyed: [] });
+
+      const destroyed: string[] = [];
+      for (const bot of matching) {
+        try {
+          try { await processManager.destroyBot(bot.name); } catch { /* process may not exist */ }
+          await apiClient.deleteBot(bot.id);
+          destroyed.push(bot.name);
+          broadcastSSE('fleet:destroy', { id: bot.id });
+        } catch (e) {
+          console.warn(`[Swarm] Failed to destroy ${bot.name}:`, e);
+        }
+      }
+      return JSON.stringify({ prefix, destroyed, count: destroyed.length });
+    }
+    default:
+      return JSON.stringify({ error: `Unknown tool: ${name}` });
+  }
+}
+
+// POST /api/commander/chat — Meta chat with fleet management tools
+app.post('/api/commander/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, history } = req.body;
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    // Resolve commander LLM provider
+    const providerName = process.env.COMMANDER_PROVIDER || 'groq';
+    const modelName = process.env.COMMANDER_MODEL || 'llama-3.3-70b-versatile';
+    const preset = resolveProvider(providerName);
+    if (!preset) {
+      return res.status(500).json({ error: `Commander provider "${providerName}" not configured` });
+    }
+
+    // Build system prompt with live fleet state
+    const bots = await getEnrichedBots();
+    const souls = (() => {
+      const dir = path.join(process.cwd(), 'souls');
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir).filter(f => f.endsWith('.md')).map(f => f.replace('.md', ''));
+    })();
+    const providers = getProviderPresets().filter(p => !!p.apiKey).map(p => p.name);
+
+    // Load available swarm templates
+    const swarmSummary = (() => {
+      const dir = path.join(process.cwd(), 'swarms');
+      if (!fs.existsSync(dir)) return 'none';
+      return fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => {
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+          return `${d.name} (${d.bots?.length || 0} bots: ${d.bots?.map((b: { role: string }) => b.role).join(', ')})`;
+        } catch { return null; }
+      }).filter(Boolean).join(', ') || 'none';
+    })();
+
+    const systemPrompt = `You are the PicoArmy Fleet Commander — an AI assistant that manages a fleet of picobot agents.
+
+## Current Fleet State
+${bots.length === 0 ? 'No bots currently deployed.' : bots.map(b => `- **${b.name}** [${b.status}] soul=${b.soul_name} provider=${b.metadata?.provider || 'default'} uptime=${b.uptime_seconds || 0}s`).join('\n')}
+
+## Available Resources
+- Soul templates: ${souls.join(', ') || 'none'}
+- LLM providers: ${providers.join(', ') || 'none configured'}
+- Swarm templates: ${swarmSummary}
+
+## Provider Strategy (pick the right one for the job)
+
+SPEED-FIRST (free, Groq — $0, rate-limited per model):
+- groq-scout     → Default for smart bots. 500K tok/day, 30K TPM. Best all-rounder.
+- groq-maverick  → Multilingual bots (12 langs). 500K tok/day.
+- groq-instant   → High-volume lightweight chat. 500K tok/day, 14.4K req/day.
+- groq-qwen      → Burst workloads, Chinese language. 500K tok/day, 60 RPM.
+- groq-kimi      → Deep reasoning, long analysis. 300K tok/day, 60 RPM.
+- groq-70b       → Tool/function calling champion. Only 100K tok/day — use sparingly.
+
+DEPTH-FIRST (coding plan, flat monthly — no rate limits):
+- glm-flash      → Unlimited fallback, always works. Free tier.
+- glm-coding     → Smarter GLM for heavy tasks. ~$3-15/mo.
+- minimax        → Most capable model. Sustained workloads. ~$10-50/mo.
+
+RULES:
+- Default to groq-scout unless there's a reason not to.
+- Use groq-instant for bots that mostly do lightweight chat or triage.
+- Use groq-maverick if the bot needs non-English languages.
+- Use groq-kimi for bots that need deep reasoning or analysis.
+- Use glm-flash as fallback if Groq rate limits are a concern.
+- Use glm-coding or minimax for bots with complex/sustained tasks.
+- Spread swarm bots across different Groq models to avoid hitting one model's daily limit.
+
+## Swarm Templates
+You can deploy coordinated bot groups using swarms. Use swarm_list to see templates, swarm_deploy to launch a group, swarm_destroy to tear one down.
+When the user asks for a "team" or "swarm" or multiple bots for a task, prefer swarm_deploy over spawning bots individually.
+You can also create ad-hoc multi-bot setups by spawning multiple bots with a shared name prefix.
+
+## Your Role
+You help the user manage their bot fleet through natural conversation. You can:
+- List, spawn, destroy, and restart bots
+- Deploy soul templates and skills to bots
+- Deploy and manage swarm teams
+- Check fleet status and provider configuration
+- Give strategic advice on fleet composition and provider selection
+
+Be concise and action-oriented. When the user asks to do something, use your tools to do it — don't just describe what you would do.`;
+
+    // Build messages
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: systemPrompt },
+    ];
+    if (Array.isArray(history)) {
+      for (const msg of history.slice(-20)) {
+        if (msg.role && msg.content) {
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+    messages.push({ role: 'user', content: message });
+
+    // Tool execution loop (max 5 iterations)
+    const toolCallsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
+
+    for (let i = 0; i < 5; i++) {
+      const llmBody: Record<string, unknown> = {
+        model: modelName,
+        messages,
+        max_completion_tokens: 4096,
+      };
+
+      // Only include tools on iterations where we haven't exhausted them
+      if (i < 4) {
+        llmBody.tools = commanderTools;
+        llmBody.tool_choice = 'auto';
+      }
+
+      const llmResponse = await fetch(`${preset.apiBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${preset.apiKey}`,
+        },
+        body: JSON.stringify(llmBody),
+      });
+
+      if (!llmResponse.ok) {
+        const errorText = await llmResponse.text();
+        console.error(`[CMD Chat] LLM error (${llmResponse.status}):`, errorText);
+        return res.status(502).json({ error: `LLM provider returned ${llmResponse.status}`, detail: errorText.slice(0, 200) });
+      }
+
+      const data = await llmResponse.json() as {
+        choices?: Array<{
+          message?: {
+            content?: string | null;
+            tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+            role?: string;
+          };
+          finish_reason?: string;
+        }>;
+      };
+
+      const choice = data.choices?.[0];
+      const assistantMsg = choice?.message;
+
+      if (!assistantMsg) {
+        return res.json({ reply: '(no response from LLM)', toolCalls: toolCallsLog, model: modelName, provider: providerName });
+      }
+
+      // If there are tool calls, execute them and continue the loop
+      if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+        // Add assistant message with tool calls to conversation
+        messages.push({ role: 'assistant', content: assistantMsg.content || '', ...({ tool_calls: assistantMsg.tool_calls } as Record<string, unknown>) });
+
+        for (const tc of assistantMsg.tool_calls) {
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(tc.function.arguments); } catch { /* empty args */ }
+
+          console.log(`[CMD Chat] Tool: ${tc.function.name}(${JSON.stringify(args)})`);
+          const result = await executeCommanderTool(tc.function.name, args);
+          toolCallsLog.push({ tool: tc.function.name, args, result });
+
+          // Add tool result to conversation
+          messages.push({ role: 'tool', content: result, ...({ tool_call_id: tc.id } as Record<string, unknown>) });
+        }
+
+        // Continue loop — LLM will process tool results
+        continue;
+      }
+
+      // No tool calls — we have our final response
+      const reply = assistantMsg.content || '(no response)';
+      return res.json({ reply, toolCalls: toolCallsLog, model: modelName, provider: providerName });
+    }
+
+    // Safety: if we hit max iterations
+    return res.json({ reply: 'Completed tool execution cycle.', toolCalls: toolCallsLog, model: modelName, provider: providerName });
+  } catch (error) {
+    console.error('[CMD Chat] Error:', error);
+    res.status(500).json({ error: 'Commander chat failed' });
+  }
+});
+
 // GET /api/fleet/process/status — Live process manager status
 app.get('/api/fleet/process/status', (_req: Request, res: Response) => {
   res.json(processManager.getFleetStatus());

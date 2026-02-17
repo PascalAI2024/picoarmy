@@ -101,7 +101,20 @@ Channels are separated to prevent race conditions between tool requests and comm
 
 ## LLM Provider Presets
 
-All presets use Coding Plan subscriptions (flat monthly rate) — no pay-per-token billing.
+Two tiers: **Groq free tier** (zero cost, rate-limited) and **Coding Plan** (flat monthly).
+
+### Groq Free Tier — Speed + Zero Cost
+
+| Preset | Model | Tokens/Day | Best For |
+|--------|-------|-----------|----------|
+| `groq-scout` | Llama 4 Scout 17B | 500K | Commander chat, smart bots |
+| `groq-maverick` | Llama 4 Maverick 17B | 500K | Multilingual bots (12 langs) |
+| `groq-instant` | Llama 3.1 8B | 500K (14.4K req/day) | High-volume lightweight bots |
+| `groq-qwen` | Qwen3 32B | 500K (60 RPM) | Burst workloads, Chinese |
+| `groq-kimi` | Kimi K2 | 300K (60 RPM) | Long reasoning tasks |
+| `groq-70b` | Llama 3.3 70B | 100K | Tool/function calling |
+
+### Coding Plan — Flat Monthly, No Rate Limits
 
 | Preset | Model | Format | Plan |
 |--------|-------|--------|------|
@@ -109,6 +122,8 @@ All presets use Coding Plan subscriptions (flat monthly rate) — no pay-per-tok
 | `glm-coding` | GLM-4.7 | OpenAI | Coding Plan (~$3-15/mo) |
 | `minimax` | MiniMax-M2.1 | OpenAI | Coding Plan (~$10-50/mo) |
 | `minimax-anthropic` | MiniMax-M2.1 | Anthropic | Same key, Anthropic format |
+
+**Strategy:** Groq for speed-first bots (chat, assistants). GLM-Flash as unlimited fallback. Coding plan models for heavy/sustained workloads.
 
 ## Tech Stack
 

@@ -6,6 +6,7 @@ import { FleetGrid } from './components/fleet/FleetGrid';
 import { SpawnDialog } from './components/fleet/SpawnDialog';
 import { BotDetail } from './components/fleet/BotDetail';
 import { CommandBar } from './components/command/CommandBar';
+import { CommanderChat } from './components/commander/CommanderChat';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { SoulsPage } from './pages/SoulsPage';
 import { LogsPage } from './pages/LogsPage';
@@ -110,6 +111,7 @@ function BotDetailPage() {
 
 function App() {
   const [spawnDialogOpen, setSpawnDialogOpen] = useState(false);
+  const [commanderChatOpen, setCommanderChatOpen] = useState(false);
   const { fetchFleet } = useFleet();
   const { connected, error: sseError } = useSSE();
   const { open: commandBarOpen, setOpen: setCommandBarOpen } = useCommandBar();
@@ -128,6 +130,7 @@ function App() {
         sseConnected={connected}
         sseError={sseError}
         onCommandBarOpen={() => setCommandBarOpen(true)}
+        onCommanderChatOpen={() => setCommanderChatOpen(true)}
       >
         <Routes>
           <Route path="/" element={<FleetPage />} />
@@ -137,6 +140,9 @@ function App() {
           <Route path="/logs" element={<LogsPage />} />
         </Routes>
       </Shell>
+
+      {/* Commander AI Chat Panel */}
+      <CommanderChat open={commanderChatOpen} onClose={() => setCommanderChatOpen(false)} />
 
       {/* Command Palette */}
       <CommandBar open={commandBarOpen} onOpenChange={setCommandBarOpen} />

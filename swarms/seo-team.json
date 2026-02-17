@@ -1,0 +1,24 @@
+{
+  "name": "seo-team",
+  "description": "SEO content production team — research, write, review",
+  "bots": [
+    {
+      "role": "researcher",
+      "soul": "seo-writer",
+      "provider": "groq-scout",
+      "description": "Research keywords, analyze competitors, find content gaps"
+    },
+    {
+      "role": "writer",
+      "soul": "seo-writer",
+      "provider": "groq-maverick",
+      "description": "Write SEO-optimized articles and blog posts"
+    },
+    {
+      "role": "reviewer",
+      "soul": "seo-writer",
+      "provider": "groq-qwen",
+      "description": "Review content quality, check SEO compliance, suggest improvements"
+    }
+  ]
+}

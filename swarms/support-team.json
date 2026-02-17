@@ -1,0 +1,18 @@
+{
+  "name": "support-team",
+  "description": "Customer support team — fast triage + smart escalation",
+  "bots": [
+    {
+      "role": "triage",
+      "soul": "support-agent",
+      "provider": "groq-instant",
+      "description": "Fast first-response triage, FAQ answers, ticket routing"
+    },
+    {
+      "role": "escalation",
+      "soul": "support-agent",
+      "provider": "groq-scout",
+      "description": "Handle complex issues, provide detailed solutions, follow up"
+    }
+  ]
+}

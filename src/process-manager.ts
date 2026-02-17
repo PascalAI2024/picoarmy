@@ -48,22 +48,63 @@ export interface ProviderPreset {
 }
 
 export function getProviderPresets(): ProviderPreset[] {
+  const groqKey = process.env.GROQ_API_KEY || '';
+  const groqBase = process.env.GROQ_API_BASE || 'https://api.groq.com/openai/v1';
+
   const presets: ProviderPreset[] = [
+    // ── Groq Free Tier (speed + zero cost) ────────────────────
+    // Best daily budget: Scout/Maverick/Instant = 500K tok/day
+    // Worst: llama-3.3-70b = 100K tok/day
     {
-      name: 'minimax',
-      apiKey: process.env.MINIMAX_API_KEY || '',
-      apiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
-      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
+      name: 'groq-scout',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       format: 'openai',
-      description: 'MiniMax via OpenAI-compatible /v1 (coding plan key)',
+      description: 'Llama 4 Scout — best all-rounder (30K TPM, 500K/day, free)',
     },
     {
-      name: 'minimax-anthropic',
-      apiKey: process.env.MINIMAX_API_KEY || '',
-      apiBase: process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic',
-      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
-      format: 'anthropic',
-      description: 'MiniMax via Anthropic-compatible /anthropic (same key)',
+      name: 'groq-maverick',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+      format: 'openai',
+      description: 'Llama 4 Maverick — multilingual 12 langs (500K/day, free)',
+    },
+    {
+      name: 'groq-instant',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'llama-3.1-8b-instant',
+      format: 'openai',
+      description: 'Llama 3.1 8B — ultra-fast, 14.4K req/day (free)',
+    },
+    {
+      name: 'groq-qwen',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'qwen/qwen3-32b',
+      format: 'openai',
+      description: 'Qwen3 32B — 60 RPM, multilingual (500K/day, free)',
+    },
+    {
+      name: 'groq-kimi',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'moonshotai/kimi-k2-instruct',
+      format: 'openai',
+      description: 'Kimi K2 — 60 RPM, strong reasoning (300K/day, free)',
+    },
+    {
+      name: 'groq-70b',
+      apiKey: groqKey, apiBase: groqBase,
+      model: 'llama-3.3-70b-versatile',
+      format: 'openai',
+      description: 'Llama 3.3 70B — best tool calling (100K/day, free)',
+    },
+    // ── Coding Plan (flat monthly, no per-token) ──────────────
+    {
+      name: 'glm-flash',
+      apiKey: process.env.GLM_CODING_API_KEY || process.env.GLM_API_KEY || '',
+      apiBase: process.env.GLM_CODING_API_BASE || process.env.GLM_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
+      model: 'glm-4.7-flash',
+      format: 'openai',
+      description: 'GLM-4.7-Flash — unlimited on coding plan (fallback)',
     },
     {
       name: 'glm-coding',
@@ -71,15 +112,23 @@ export function getProviderPresets(): ProviderPreset[] {
       apiBase: process.env.GLM_CODING_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
       model: process.env.GLM_CODING_MODEL || 'glm-4.7',
       format: 'openai',
-      description: 'Zhipu GLM-4.7 via coding plan (prompt-quota)',
+      description: 'GLM-4.7 — smart, coding plan (~$3-15/mo)',
     },
     {
-      name: 'glm-flash',
-      apiKey: process.env.GLM_CODING_API_KEY || process.env.GLM_API_KEY || '',
-      apiBase: process.env.GLM_CODING_API_BASE || process.env.GLM_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
-      model: 'glm-4.7-flash',
+      name: 'minimax',
+      apiKey: process.env.MINIMAX_API_KEY || '',
+      apiBase: process.env.MINIMAX_API_BASE || 'https://api.minimax.io/v1',
+      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
       format: 'openai',
-      description: 'Zhipu GLM-4.7-Flash (coding plan, fast reasoning)',
+      description: 'MiniMax M2.1 — coding plan (~$10-50/mo)',
+    },
+    {
+      name: 'minimax-anthropic',
+      apiKey: process.env.MINIMAX_API_KEY || '',
+      apiBase: process.env.MINIMAX_ANTHROPIC_BASE || 'https://api.minimax.io/anthropic',
+      model: process.env.MINIMAX_MODEL || 'MiniMax-M2.1',
+      format: 'anthropic',
+      description: 'MiniMax M2.1 Anthropic format (same key)',
     },
   ];
   return presets.filter(p => p.apiKey); // Only return presets with configured keys

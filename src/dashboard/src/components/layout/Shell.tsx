@@ -8,9 +8,10 @@ interface ShellProps {
   sseConnected: boolean;
   sseError: string | null;
   onCommandBarOpen: () => void;
+  onCommanderChatOpen: () => void;
 }
 
-export function Shell({ children, onSpawnClick, sseConnected, sseError, onCommandBarOpen }: ShellProps) {
+export function Shell({ children, onSpawnClick, sseConnected, sseError, onCommandBarOpen, onCommanderChatOpen }: ShellProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const toggleMobileMenu = useCallback(() => setMobileMenuOpen((v) => !v), []);
 
@@ -25,6 +26,7 @@ export function Shell({ children, onSpawnClick, sseConnected, sseError, onComman
           sseConnected={sseConnected}
           sseError={sseError}
           onCommandBarOpen={onCommandBarOpen}
+          onCommanderChatOpen={onCommanderChatOpen}
           onMobileMenuToggle={toggleMobileMenu}
         />
 

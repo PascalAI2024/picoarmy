@@ -1,6 +1,6 @@
 // API client for Commander REST endpoints
 
-import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus, ChatMessage, ChatResponse, Skill } from './types';
+import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus, ChatMessage, ChatResponse, Skill, CommanderChatMessage, CommanderChatResponse } from './types';
 
 // Base URL for API (same origin in production, or from env in dev)
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -194,6 +194,17 @@ export async function removeSkill(botId: string, skillName: string): Promise<voi
   });
 }
 
+// Commander Chat API
+export async function chatWithCommander(
+  message: string,
+  history: CommanderChatMessage[] = []
+): Promise<CommanderChatResponse> {
+  return fetchJSON<CommanderChatResponse>('/api/commander/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, history: history.map(m => ({ role: m.role, content: m.content })) }),
+  });
+}
+
 export default {
   fetchFleet,
   fetchBot,
@@ -219,4 +230,5 @@ export default {
   fetchBotSkills,
   deploySkill,
   removeSkill,
+  chatWithCommander,
 };

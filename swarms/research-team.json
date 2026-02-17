@@ -1,0 +1,18 @@
+{
+  "name": "research-team",
+  "description": "Research & analysis team — deep analysis + clear summaries",
+  "bots": [
+    {
+      "role": "analyst",
+      "soul": "assistant",
+      "provider": "groq-kimi",
+      "description": "Deep research and analysis, long-form reasoning"
+    },
+    {
+      "role": "summarizer",
+      "soul": "assistant",
+      "provider": "groq-scout",
+      "description": "Synthesize findings into clear, actionable summaries"
+    }
+  ]
+}

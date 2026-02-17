@@ -91,6 +91,27 @@ export interface ChatResponse {
   provider: string;
 }
 
+// Commander Chat types
+export interface CommanderToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+  result: string;
+}
+
+export interface CommanderChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  toolCalls?: CommanderToolCall[];
+  timestamp?: string;
+}
+
+export interface CommanderChatResponse {
+  reply: string;
+  toolCalls: CommanderToolCall[];
+  model: string;
+  provider: string;
+}
+
 // SSE Event types
 export type SSEEvent =
   | { type: 'fleet:update'; data: Bot[] }
