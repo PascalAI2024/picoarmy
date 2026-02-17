@@ -160,8 +160,7 @@ export interface BotProcessInfo {
 
 const DATA_DIR = process.env.PICOARMY_DATA_DIR || path.join(process.cwd(), 'data');
 const BOTS_DIR = path.join(DATA_DIR, 'bots');
-const PICOBOT_BIN_RAW = process.env.PICOBOT_BIN || 'picobot';
-const PICOBOT_BIN = PICOBOT_BIN_RAW.startsWith('/') ? PICOBOT_BIN_RAW : path.resolve(process.cwd(), PICOBOT_BIN_RAW);
+const PICOBOT_BIN = process.env.PICOBOT_BIN || '/usr/local/bin/picobot';
 const PID_DIR = path.join(DATA_DIR, 'pids');
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_DELAY_MS = 5000;
