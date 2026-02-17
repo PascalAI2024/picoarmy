@@ -60,11 +60,28 @@ export async function deleteBot(id: string): Promise<void> {
   });
 }
 
+export async function restartBot(id: string): Promise<{ success: boolean; bot_id: string }> {
+  return fetchJSON(`/api/fleet/${id}/restart`, {
+    method: 'POST',
+  });
+}
+
 export async function fetchBotLogs(
   botId: string,
   limit = 100
 ): Promise<LogEntry[]> {
   return fetchJSON<LogEntry[]>(`/api/fleet/${botId}/logs?limit=${limit}`);
+}
+
+export async function fetchGlobalLogs(
+  limit = 100,
+  level?: string,
+  bot?: string
+): Promise<LogEntry[]> {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  if (level) params.set('level', level);
+  if (bot) params.set('bot', bot);
+  return fetchJSON<LogEntry[]>(`/api/logs?${params.toString()}`);
 }
 
 // Soul API
@@ -83,6 +100,26 @@ export async function deploySoul(
   return fetchJSON(`/api/fleet/${botId}/soul`, {
     method: 'POST',
     body: JSON.stringify({ soul_name: soulName }),
+  });
+}
+
+export async function createSoul(name: string, content: string): Promise<SoulTemplate> {
+  return fetchJSON('/api/souls', {
+    method: 'POST',
+    body: JSON.stringify({ name, content }),
+  });
+}
+
+export async function updateSoul(name: string, content: string): Promise<SoulTemplate> {
+  return fetchJSON(`/api/souls/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteSoul(name: string): Promise<void> {
+  return fetchJSON(`/api/souls/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
   });
 }
 
@@ -133,10 +170,15 @@ export default {
   fetchBot,
   createBot,
   deleteBot,
+  restartBot,
   fetchBotLogs,
+  fetchGlobalLogs,
   fetchSoulContent,
   fetchSouls,
   deploySoul,
+  createSoul,
+  updateSoul,
+  deleteSoul,
   fetchProviders,
   fetchTools,
   callTool,

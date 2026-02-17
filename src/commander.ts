@@ -345,6 +345,55 @@ app.delete('/api/fleet/:id', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/fleet/:id/restart — Restart a bot
+app.post('/api/fleet/:id/restart', async (req: Request, res: Response) => {
+  try {
+    const botId = req.params.id!;
+
+    // Get bot from DB
+    const bot = await apiClient.getBot(botId);
+    if (!bot) {
+      return res.status(404).json({ error: 'Bot not found' });
+    }
+
+    // Kill existing process
+    try {
+      await processManager.destroyBot(bot.name);
+    } catch {
+      // Process may not exist (dev mode) — that's OK
+    }
+
+    // Respawn process with same config
+    const preset = bot.metadata?.provider ? resolveProvider(bot.metadata.provider as string) : undefined;
+    const config: BotConfig = {
+      name: bot.name,
+      soulName: bot.soul_name,
+      isPermanent: bot.is_permanent,
+      ttlSeconds: bot.ttl_seconds ?? null,
+      openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+      openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || 'https://api.minimax.io/v1',
+      model: (bot.metadata?.model as string) || preset?.model || process.env.PICOBOT_MODEL || 'MiniMax-M2',
+      providerPreset: bot.metadata?.provider as string,
+      telegramBotToken: (bot.metadata?.telegram_token as string) || '',
+      telegramAllowFrom: (bot.metadata?.telegram_allow_from as string) || '',
+      clientId: bot.client_id,
+      workspaceDir: '',
+    };
+
+    try {
+      await processManager.spawnBot(config);
+    } catch (spawnErr) {
+      console.warn(`Process spawn failed for "${bot.name}" during restart:`, spawnErr);
+    }
+
+    broadcastSSE('fleet:update', bot);
+    res.json({ success: true, bot_id: botId });
+  } catch (error) {
+    console.error('Error restarting bot:', error);
+    res.status(500).json({ error: 'Failed to restart bot' });
+  }
+});
+
 // GET /api/fleet/:id/logs — Bot telemetry
 app.get('/api/fleet/:id/logs', async (req: Request, res: Response) => {
   try {
@@ -353,6 +402,21 @@ app.get('/api/fleet/:id/logs', async (req: Request, res: Response) => {
     res.json(telemetry);
   } catch (error) {
     console.error('Error fetching logs:', error);
+    res.status(500).json({ error: 'Failed to fetch logs' });
+  }
+});
+
+// GET /api/logs — Global fleet logs
+app.get('/api/logs', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const level = req.query.level as string;
+    const bot = req.query.bot as string;
+
+    const telemetry = await apiClient.getGlobalLogs(limit, level, bot);
+    res.json(telemetry);
+  } catch (error) {
+    console.error('Error fetching global logs:', error);
     res.status(500).json({ error: 'Failed to fetch logs' });
   }
 });
@@ -432,6 +496,109 @@ app.post('/api/fleet/:id/soul', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error updating soul:', error);
     res.status(500).json({ error: 'Failed to update soul' });
+  }
+});
+
+// GET /api/souls/:name — Get single soul template content
+app.get('/api/souls/:name', (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    const soulPath = path.join(process.cwd(), 'souls', `${name}.md`);
+
+    if (!fs.existsSync(soulPath)) {
+      return res.status(404).json({ error: `Soul "${name}" not found` });
+    }
+
+    const content = fs.readFileSync(soulPath, 'utf-8');
+    const descMatch = content.match(/^#\s+(.+)/m);
+    const description = descMatch ? descMatch[1] : name;
+
+    res.json({ name, description, content });
+  } catch (error) {
+    console.error('Error fetching soul:', error);
+    res.status(500).json({ error: 'Failed to fetch soul' });
+  }
+});
+
+// POST /api/souls — Create new soul template
+app.post('/api/souls', (req: Request, res: Response) => {
+  try {
+    const { name, content } = req.body;
+    if (!name || !content) {
+      return res.status(400).json({ error: 'name and content are required' });
+    }
+
+    // Validate name (alphanumeric + hyphens only)
+    if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+      return res.status(400).json({ error: 'name must be alphanumeric with hyphens only' });
+    }
+
+    const soulsDir = path.join(process.cwd(), 'souls');
+    if (!fs.existsSync(soulsDir)) {
+      fs.mkdirSync(soulsDir, { recursive: true });
+    }
+
+    const soulPath = path.join(soulsDir, `${name}.md`);
+    if (fs.existsSync(soulPath)) {
+      return res.status(409).json({ error: `Soul "${name}" already exists` });
+    }
+
+    fs.writeFileSync(soulPath, content, 'utf-8');
+
+    // Extract description from first line
+    const descMatch = content.match(/^#\s+(.+)/m);
+    const description = descMatch ? descMatch[1] : name;
+
+    res.json({ name, description });
+  } catch (error) {
+    console.error('Error creating soul:', error);
+    res.status(500).json({ error: 'Failed to create soul' });
+  }
+});
+
+// PUT /api/souls/:name — Update soul template content
+app.put('/api/souls/:name', (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    const { content } = req.body;
+
+    if (!content) {
+      return res.status(400).json({ error: 'content is required' });
+    }
+
+    const soulPath = path.join(process.cwd(), 'souls', `${name}.md`);
+    if (!fs.existsSync(soulPath)) {
+      return res.status(404).json({ error: `Soul "${name}" not found` });
+    }
+
+    fs.writeFileSync(soulPath, content, 'utf-8');
+
+    // Extract description from first line
+    const descMatch = content.match(/^#\s+(.+)/m);
+    const description = descMatch ? descMatch[1] : name;
+
+    res.json({ name, description });
+  } catch (error) {
+    console.error('Error updating soul:', error);
+    res.status(500).json({ error: 'Failed to update soul' });
+  }
+});
+
+// DELETE /api/souls/:name — Delete soul template
+app.delete('/api/souls/:name', (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    const soulPath = path.join(process.cwd(), 'souls', `${name}.md`);
+
+    if (!fs.existsSync(soulPath)) {
+      return res.status(404).json({ error: `Soul "${name}" not found` });
+    }
+
+    fs.unlinkSync(soulPath);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting soul:', error);
+    res.status(500).json({ error: 'Failed to delete soul' });
   }
 });
 

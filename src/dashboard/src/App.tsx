@@ -7,6 +7,9 @@ import { SpawnDialog } from './components/fleet/SpawnDialog';
 import { BotDetail } from './components/fleet/BotDetail';
 import { CommandBar } from './components/command/CommandBar';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { SoulsPage } from './pages/SoulsPage';
+import { LogsPage } from './pages/LogsPage';
+import { SkillsPage } from './pages/SkillsPage';
 import { useFleet } from './hooks/useFleet';
 import { useSSE } from './hooks/useSSE';
 import { useCommandBar } from './hooks/useCommandBar';
@@ -102,44 +105,8 @@ function BotDetailPage() {
   );
 }
 
-function SoulsPage() {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-        Soul Templates
-      </h1>
-      <div className="panel text-center py-12">
-        <p className="text-text-muted">Soul management coming soon</p>
-      </div>
-    </div>
-  );
-}
 
-function SkillsPage() {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-        Skills Library
-      </h1>
-      <div className="panel text-center py-12">
-        <p className="text-text-muted">Skills library coming soon</p>
-      </div>
-    </div>
-  );
-}
 
-function LogsPage() {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-        System Logs
-      </h1>
-      <div className="panel text-center py-12">
-        <p className="text-text-muted">Global log viewer coming soon</p>
-      </div>
-    </div>
-  );
-}
 
 function App() {
   const [spawnDialogOpen, setSpawnDialogOpen] = useState(false);

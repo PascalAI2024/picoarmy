@@ -5,8 +5,9 @@ import { StatusLED } from '../ui/StatusLED';
 import { LogStream } from '../telemetry/LogStream';
 import { ActivityChart } from '../telemetry/ActivityChart';
 import { ChatTab } from './ChatTab';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
-import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool } from '../../lib/api';
+import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool, updateSoul, restartBot } from '../../lib/api';
 import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
 
 interface BotDetailProps {
@@ -32,6 +33,11 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
   const [loadingSoul, setLoadingSoul] = useState(false);
   const [deployingSoul, setDeployingSoul] = useState(false);
   const [selectedSoulToDeploy, setSelectedSoulToDeploy] = useState('');
+  const [editingSoul, setEditingSoul] = useState(false);
+  const [editSoulContent, setEditSoulContent] = useState('');
+  const [savingSoul, setSavingSoul] = useState(false);
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -102,8 +108,20 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
   };
 
   const handleRestart = () => {
-    if (window.confirm(`Restart bot "${bot.name}"?`)) {
+    setShowRestartConfirm(true);
+  };
+
+  const confirmRestart = async () => {
+    setRestarting(true);
+    try {
+      await restartBot(bot.id);
+      toast.success(`Bot "${bot.name}" restarted`);
       onRestart?.();
+    } catch (error) {
+      console.error('Failed to restart bot:', error);
+      toast.error('Failed to restart bot');
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -123,6 +141,31 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
     } finally {
       setDeployingSoul(false);
     }
+  };
+
+  const handleEditSoul = () => {
+    setEditingSoul(true);
+    setEditSoulContent(soulContent || '');
+  };
+
+  const handleSaveSoul = async () => {
+    setSavingSoul(true);
+    try {
+      await updateSoul(bot.soul_name, editSoulContent);
+      toast.success('Soul updated');
+      setSoulContent(editSoulContent);
+      setEditingSoul(false);
+    } catch (error) {
+      console.error('Failed to update soul:', error);
+      toast.error('Failed to update soul');
+    } finally {
+      setSavingSoul(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingSoul(false);
+    setEditSoulContent('');
   };
 
   const handleProviderChange = (providerName: string) => {
@@ -289,14 +332,73 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
 
           {/* Soul content */}
           <div className="panel">
-            <div className="text-xs text-text-muted uppercase tracking-wider mb-3">
-              Current Soul: {bot.soul_name}
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs text-text-muted uppercase tracking-wider">
+                Current Soul: {bot.soul_name}
+              </div>
+              {!editingSoul && soulContent && (
+                <button
+                  onClick={handleEditSoul}
+                  className="
+                    px-3 py-1 text-xs
+                    bg-bg-surface border border-border
+                    text-text-secondary
+                    hover:text-text-primary hover:border-accent-cyan
+                    transition-colors
+                  "
+                >
+                  Edit
+                </button>
+              )}
             </div>
             {loadingSoul ? (
               <div className="animate-pulse space-y-2">
                 <div className="h-4 bg-bg-elevated rounded w-1/3" />
                 <div className="h-3 bg-bg-elevated rounded w-full" />
                 <div className="h-3 bg-bg-elevated rounded w-2/3" />
+              </div>
+            ) : editingSoul ? (
+              <div className="space-y-3">
+                <textarea
+                  value={editSoulContent}
+                  onChange={(e) => setEditSoulContent(e.target.value)}
+                  className="
+                    w-full px-3 py-2
+                    bg-bg-surface border border-border
+                    text-text-primary font-mono text-sm
+                    focus:border-accent-cyan focus:outline-none
+                    transition-colors resize-y
+                  "
+                  style={{ minHeight: '300px' }}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSaveSoul}
+                    disabled={savingSoul}
+                    className="
+                      px-4 py-2 text-sm font-medium
+                      bg-accent-cyan/20 border border-accent-cyan
+                      text-accent-cyan
+                      hover:bg-accent-cyan/30
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      transition-colors
+                    "
+                  >
+                    {savingSoul ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    onClick={handleCancelEdit}
+                    className="
+                      px-4 py-2 text-sm
+                      bg-bg-surface border border-border
+                      text-text-secondary
+                      hover:text-text-primary hover:border-border-hover
+                      transition-colors
+                    "
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             ) : soulContent ? (
               <pre className="mono-data text-sm text-text-secondary whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto">
@@ -563,15 +665,17 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
           <div className="flex gap-3">
             <button
               onClick={handleRestart}
+              disabled={restarting}
               className="
                 px-4 py-2 text-sm
                 bg-status-idle/20 border border-status-idle
                 text-status-idle
                 hover:bg-status-idle/30
+                disabled:opacity-50 disabled:cursor-not-allowed
                 transition-colors
               "
             >
-              Restart Bot
+              {restarting ? 'Restarting...' : 'Restart Bot'}
             </button>
 
             <button
@@ -596,6 +700,18 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Restart Confirmation */}
+      <ConfirmDialog
+        open={showRestartConfirm}
+        onOpenChange={setShowRestartConfirm}
+        title="Restart Bot"
+        description={`Are you sure you want to restart "${bot.name}"? The bot process will be terminated and restarted with the same configuration.`}
+        confirmLabel="Restart"
+        cancelLabel="Cancel"
+        variant="default"
+        onConfirm={confirmRestart}
+      />
     </div>
   );
 }

@@ -25,6 +25,7 @@ export function BotCard({ bot, onClick }: BotCardProps) {
   return (
     <button
       onClick={onClick}
+      aria-label={`View bot ${bot.name}, soul ${bot.soul_name}, status ${bot.status}`}
       className={`
         group relative
         w-full text-left

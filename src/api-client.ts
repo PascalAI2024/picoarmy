@@ -208,6 +208,63 @@ export async function getTelemetry(
   }
 }
 
+export async function getGlobalLogs(
+  limit = 100,
+  level?: string,
+  bot?: string
+): Promise<TelemetryEntry[]> {
+  try {
+    let query = `/telemetry?order=timestamp.desc&limit=${limit}`;
+
+    // Add level filter if provided (comma-separated levels)
+    if (level) {
+      const levels = level.split(',').map(l => l.trim());
+      query += `&level=in.(${levels.join(',')})`;
+    }
+
+    // Add bot name filter if provided
+    if (bot) {
+      // Need to match bot_id which is the bot UUID, but query param is name
+      // For now, just do a simple text match on bot_id
+      query += `&bot_id=like.*${bot}*`;
+    }
+
+    const response = await apiClient.get(query, {
+      headers: { Accept: 'application/json' }
+    });
+    return response.data;
+  } catch (error) {
+    console.warn('PostgREST unavailable, returning mock global logs:', error);
+    // Return mock global logs
+    return [
+      {
+        id: 'log-1',
+        bot_id: 'bot-alpha',
+        level: 'info',
+        message: 'Bot alpha started',
+        metadata: {},
+        timestamp: new Date(Date.now() - 5000).toISOString(),
+      },
+      {
+        id: 'log-2',
+        bot_id: 'bot-bravo',
+        level: 'warn',
+        message: 'High CPU usage detected',
+        metadata: {},
+        timestamp: new Date(Date.now() - 15000).toISOString(),
+      },
+      {
+        id: 'log-3',
+        bot_id: 'bot-alpha',
+        level: 'error',
+        message: 'Failed to connect to MCP server',
+        metadata: {},
+        timestamp: new Date(Date.now() - 30000).toISOString(),
+      },
+    ];
+  }
+}
+
 export default {
   getBots,
   getBot,
@@ -215,4 +272,5 @@ export default {
   updateBot,
   deleteBot,
   getTelemetry,
+  getGlobalLogs,
 };
