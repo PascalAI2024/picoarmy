@@ -57,9 +57,15 @@ export function useSSE(options: UseSSEOptions = {}) {
 
       // Handle 'fleet:update' event
       eventSource.addEventListener('fleet:update', (event) => {
-        const bots: Bot[] = JSON.parse(event.data);
-        console.log('[SSE] Fleet update:', bots.length, 'bots');
-        setBots(bots);
+        const data = JSON.parse(event.data);
+        // Server may send a single bot or an array — normalize
+        if (Array.isArray(data)) {
+          console.log('[SSE] Fleet update:', data.length, 'bots');
+          setBots(data);
+        } else if (data && data.id) {
+          console.log('[SSE] Bot update:', data.name || data.id);
+          updateBot(data.id, data);
+        }
       });
 
       // Handle 'fleet:spawn' event
