@@ -73,6 +73,18 @@ export interface MCPHubStatus {
   totalTools: number;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: string;
+}
+
+export interface ChatResponse {
+  reply: string;
+  model: string;
+  provider: string;
+}
+
 // SSE Event types
 export type SSEEvent =
   | { type: 'fleet:update'; data: Bot[] }

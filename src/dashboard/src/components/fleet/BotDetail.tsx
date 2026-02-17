@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/Tabs';
 import { StatusLED } from '../ui/StatusLED';
 import { LogStream } from '../telemetry/LogStream';
 import { ActivityChart } from '../telemetry/ActivityChart';
+import { ChatTab } from './ChatTab';
 import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
 import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool } from '../../lib/api';
 import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
@@ -169,13 +170,15 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview" className="w-full">
+      <Tabs defaultValue="overview" className="w-full" onValueChange={(tab) => {
+        if (tab === 'tools' && tools.length === 0 && !loadingTools) loadTools();
+      }}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
           <TabsTrigger value="soul">Soul</TabsTrigger>
-          <TabsTrigger value="skills">Skills</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="tools">Tools</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="telemetry">Telemetry</TabsTrigger>
           <TabsTrigger value="actions">Actions</TabsTrigger>
         </TabsList>
@@ -245,6 +248,10 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="chat">
+          <ChatTab botId={bot.id} botName={bot.name} />
         </TabsContent>
 
         <TabsContent value="soul" className="space-y-4">

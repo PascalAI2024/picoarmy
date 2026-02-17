@@ -1,6 +1,6 @@
 // API client for Commander REST endpoints
 
-import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus } from './types';
+import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus, ChatMessage, ChatResponse } from './types';
 
 // Base URL for API (same origin in production, or from env in dev)
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -108,6 +108,18 @@ export async function fetchMCPStatus(): Promise<MCPHubStatus> {
   return fetchJSON<MCPHubStatus>('/api/mcp/status');
 }
 
+// Chat API
+export async function chatWithBot(
+  botId: string,
+  message: string,
+  history: ChatMessage[] = []
+): Promise<ChatResponse> {
+  return fetchJSON<ChatResponse>(`/api/fleet/${botId}/chat`, {
+    method: 'POST',
+    body: JSON.stringify({ message, history }),
+  });
+}
+
 // Settings API
 export async function updateBotSettings(id: string, settings: BotSettings): Promise<Bot> {
   return fetchJSON<Bot>(`/api/fleet/${id}/settings`, {
@@ -130,4 +142,5 @@ export default {
   callTool,
   fetchMCPStatus,
   updateBotSettings,
+  chatWithBot,
 };

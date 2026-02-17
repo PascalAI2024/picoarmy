@@ -435,6 +435,86 @@ app.post('/api/fleet/:id/soul', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/fleet/:id/chat — Test chat with bot's soul via LLM
+app.post('/api/fleet/:id/chat', async (req: Request, res: Response) => {
+  try {
+    const { message, history } = req.body;
+    if (!message) return res.status(400).json({ error: 'message is required' });
+
+    const bot = await apiClient.getBot(req.params.id!);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    // Read soul content
+    const soulPath = path.join(process.cwd(), 'souls', `${bot.soul_name}.md`);
+    const soulContent = fs.existsSync(soulPath)
+      ? fs.readFileSync(soulPath, 'utf-8')
+      : `You are ${bot.name}, a helpful assistant.`;
+
+    // Resolve provider from bot metadata or use default
+    const providerName = (bot.metadata?.provider as string) || 'glm-flash';
+    const preset = resolveProvider(providerName);
+
+    if (!preset) {
+      return res.status(400).json({
+        error: `No configured provider "${providerName}". Configure API keys in .env.`,
+      });
+    }
+
+    // Build messages array
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'system', content: soulContent },
+    ];
+
+    // Add conversation history if provided
+    if (Array.isArray(history)) {
+      for (const msg of history.slice(-20)) { // Cap at last 20 messages
+        if (msg.role && msg.content) {
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+
+    messages.push({ role: 'user', content: message });
+
+    // Call LLM (OpenAI-compatible)
+    const llmResponse = await fetch(`${preset.apiBase}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${preset.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: (bot.metadata?.model as string) || preset.model,
+        messages,
+        max_tokens: 1024,
+      }),
+    });
+
+    if (!llmResponse.ok) {
+      const errorText = await llmResponse.text();
+      console.error(`[Chat] LLM error (${llmResponse.status}):`, errorText);
+      return res.status(502).json({
+        error: `LLM provider returned ${llmResponse.status}`,
+        detail: errorText.slice(0, 200),
+      });
+    }
+
+    const data = await llmResponse.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const reply = data.choices?.[0]?.message?.content || '(no response)';
+
+    res.json({
+      reply,
+      model: (bot.metadata?.model as string) || preset.model,
+      provider: preset.name,
+    });
+  } catch (error) {
+    console.error('Error in chat:', error);
+    res.status(500).json({ error: 'Chat failed' });
+  }
+});
+
 // GET /api/fleet/process/status — Live process manager status
 app.get('/api/fleet/process/status', (_req: Request, res: Response) => {
   res.json(processManager.getFleetStatus());
