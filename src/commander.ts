@@ -1103,6 +1103,35 @@ const commanderTools = [
   {
     type: 'function' as const,
     function: {
+      name: 'deploy_team',
+      description: 'Deploy a custom team of persistent bots. YOU design the team composition — roles, providers, descriptions. Generates AI-powered souls for each role, spawns all bots. Use for custom/dynamic teams (not pre-built templates).',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'What the team needs to accomplish' },
+          team_name: { type: 'string', description: 'Name prefix for all bots (e.g. "pricing-team")' },
+          bots: {
+            type: 'array',
+            description: 'Bot definitions — role, what it does, optional provider/style',
+            items: {
+              type: 'object',
+              properties: {
+                role: { type: 'string', description: 'Bot role (e.g. researcher, analyst, writer)' },
+                description: { type: 'string', description: 'What this bot does' },
+                provider: { type: 'string', description: 'Provider preset (default: groq-scout)' },
+                style: { type: 'string', description: 'Personality style (e.g. technical, creative, formal)' },
+              },
+              required: ['role', 'description'],
+            },
+          },
+        },
+        required: ['task', 'team_name', 'bots'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'web_search',
       description: 'Search the web for current information. Returns titles, snippets, URLs, and dates. Use for news, research, current events, or any query requiring up-to-date information.',
       parameters: {
@@ -1111,6 +1140,20 @@ const commanderTools = [
           query: { type: 'string', description: 'Search query (be specific for best results)' },
         },
         required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'fetch_url',
+      description: 'Fetch the full content of a web page. Use AFTER web_search to get detailed content from a specific URL. Returns the page text, not just a snippet.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The URL to fetch content from' },
+        },
+        required: ['url'],
       },
     },
   },
@@ -1556,11 +1599,115 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
       return JSON.stringify({ prefix, destroyed, count: destroyed.length });
     }
+    case 'deploy_team': {
+      const task = args.task as string;
+      const teamName = args.team_name as string;
+      const botDefs = args.bots as Array<{ role: string; description: string; provider?: string; style?: string }>;
+      if (!task || !teamName || !botDefs?.length) return JSON.stringify({ error: 'task, team_name, and bots[] are required' });
+
+      const results: Array<{ name: string; role: string; provider: string; soul_preview: string; status: string }> = [];
+      const createdBotIds: string[] = [];
+
+      for (const botDef of botDefs) {
+        const botName = `${teamName}-${botDef.role}`;
+        const soulName = `${teamName}-${botDef.role}`;
+        const providerName = botDef.provider || 'groq-scout';
+        const preset = resolveProvider(providerName);
+
+        try {
+          // Generate soul content via LLM
+          const content = await generateSoulContent(
+            botDef.description,
+            botDef.role,
+            botDef.style
+          );
+          // Append team context
+          const soulContent = content + `\n\n## Team Context\nYou are part of team "${teamName}" working on: ${task}`;
+
+          // Save soul file
+          const soulsDir = path.join(process.cwd(), 'souls');
+          if (!fs.existsSync(soulsDir)) fs.mkdirSync(soulsDir, { recursive: true });
+          fs.writeFileSync(path.join(soulsDir, `${soulName}.md`), soulContent, 'utf-8');
+          console.log(`[deploy_team] Generated soul: ${soulName}.md`);
+
+          // Create DB record
+          const dbBot = await apiClient.createBot({
+            name: botName, soul_name: soulName, is_permanent: false,
+            metadata: { provider: providerName, model: preset?.model || 'glm-4.7-flash', team: teamName, role: botDef.role },
+          });
+          createdBotIds.push(dbBot.id);
+
+          // Spawn process
+          const botConfig: BotConfig = {
+            name: botName,
+            soulName,
+            isPermanent: false,
+            ttlSeconds: null,
+            openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+            openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
+            model: preset?.model || 'glm-4.7-flash',
+            telegramBotToken: '',
+            telegramAllowFrom: '',
+            workspaceDir: '',
+          };
+          if (providerName) botConfig.providerPreset = providerName;
+
+          await processManager.spawnBot(botConfig);
+          broadcastSSE('fleet:spawn', dbBot);
+          results.push({
+            name: botName,
+            role: botDef.role,
+            provider: providerName,
+            soul_preview: soulContent.slice(0, 200) + '...',
+            status: 'spawned',
+          });
+        } catch (e) {
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          console.error(`[deploy_team] Failed to spawn ${botName}:`, errorMsg);
+          results.push({ name: botName, role: botDef.role, provider: providerName, soul_preview: '', status: `error: ${errorMsg}` });
+
+          // Rollback: destroy all previously created bots
+          console.warn(`[deploy_team] Rolling back team "${teamName}" due to error`);
+          for (const id of createdBotIds) {
+            try {
+              const existingBot = await apiClient.getBot(id);
+              if (existingBot) {
+                try { await processManager.destroyBot(existingBot.name); } catch { /* ok */ }
+                await apiClient.deleteBot(id);
+              }
+            } catch (rollbackErr) {
+              console.error(`[deploy_team] Rollback failed for bot ${id}:`, rollbackErr);
+            }
+          }
+          return JSON.stringify({ error: `Team deployment failed: ${errorMsg}`, partialResults: results });
+        }
+      }
+      return JSON.stringify({ team: teamName, task, bots: results });
+    }
     case 'web_search': {
       const query = args.query as string;
       if (!query) return JSON.stringify({ error: 'query is required' });
 
-      // Try MiniMax Coding Plan Search first (~1s latency)
+      // Try Z.AI webSearchPrime MCP first (best results)
+      try {
+        const result = await mcpHub.callTool({
+          toolName: 'webSearchPrime',
+          arguments: { query },
+          botName: 'commander',
+        });
+        const text = result.content
+          .filter(c => c.type === 'text' && c.text)
+          .map(c => c.text)
+          .join('\n');
+        if (text) {
+          console.log(`[web_search] Z.AI webSearchPrime returned ${text.length} chars for "${query}"`);
+          return JSON.stringify({ source: 'z-ai-search', query, content: text.slice(0, 10000) });
+        }
+      } catch (e) {
+        console.error('[web_search] Z.AI webSearchPrime failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      // Fallback: MiniMax Coding Plan Search (~1s latency)
       const minimaxKey = process.env.MINIMAX_API_KEY;
       if (minimaxKey) {
         try {
@@ -1591,7 +1738,10 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
               }));
               const related = searchData.related_searches?.slice(0, 3).map(r => r.query) || [];
               console.log(`[web_search] MiniMax returned ${results.length} results for "${query}"`);
-              return JSON.stringify({ source: 'minimax', query, results, related_searches: related });
+              // Check if snippets contain actual data vs just site descriptions
+              const hasData = results.some(r => r.snippet.length > 80 && !r.snippet.match(/^(Visit|Watch|Stay up|Get the latest|Download)/));
+              const caveat = hasData ? '' : ' NOTE: These results are mostly website homepages/descriptions — they do NOT contain actual data like scores, prices, or specific facts. Do NOT fabricate data from these. Either relay the links to the user or explain that the search could not find specific data.';
+              return JSON.stringify({ source: 'minimax', query, results, related_searches: related, caveat });
             }
           }
         } catch (e) {
@@ -1634,6 +1784,54 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
 
       return JSON.stringify({ error: 'All search providers failed', query });
+    }
+    case 'fetch_url': {
+      const url = args.url as string;
+      if (!url) return JSON.stringify({ error: 'url is required' });
+
+      console.log(`[fetch_url] Fetching: ${url}`);
+
+      // Try Z.AI web-reader MCP first
+      try {
+        const result = await mcpHub.callTool({
+          toolName: 'webReader',
+          arguments: { url },
+          botName: 'commander',
+        });
+        const text = result.content
+          .filter(c => c.type === 'text' && c.text)
+          .map(c => c.text)
+          .join('\n');
+        if (text) {
+          console.log(`[fetch_url] web-reader returned ${text.length} chars`);
+          return JSON.stringify({ source: 'z-ai-web-reader', url, content: text.slice(0, 12000) });
+        }
+      } catch (e) {
+        console.error('[fetch_url] web-reader failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      // Fallback: basic fetch with text extraction
+      try {
+        const resp = await fetch(url, {
+          headers: { 'User-Agent': 'PicoArmy/1.0' },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (resp.ok) {
+          const html = await resp.text();
+          // Strip HTML tags for rough text extraction
+          const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          console.log(`[fetch_url] raw fetch returned ${text.length} chars`);
+          return JSON.stringify({ source: 'raw-fetch', url, content: text.slice(0, 12000) });
+        }
+      } catch (e) {
+        console.error('[fetch_url] raw fetch failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      return JSON.stringify({ error: 'Failed to fetch URL', url });
     }
     case 'mcp_call': {
       const toolName = args.tool_name as string;
@@ -1727,7 +1925,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       let previousOutput = '';
 
       for (let idx = 0; idx < botDefs.length; idx++) {
-        const botDef = botDefs[idx];
+        const botDef = botDefs[idx]!;
         const providerName = botDef.provider || 'groq-scout';
         const preset = resolveProvider(providerName);
         const apiBase = preset?.apiBase || process.env.OPENAI_API_BASE || '';
@@ -1738,21 +1936,22 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
           return JSON.stringify({ error: `Provider "${providerName}" not configured`, pipeline });
         }
 
-        // Generate soul for this role
-        const soulDesc = `${botDef.task}. You are the ${botDef.role} in a swarm working on: ${task}`;
-        let soulContent: string;
-        try {
-          soulContent = await generateSoulContent(soulDesc, botDef.role, botDef.style);
-        } catch {
-          soulContent = `You are a ${botDef.role}. ${botDef.task}`;
-        }
+        // Generate soul for this role — skip expensive generation, use direct instructions
+        // Soul generation adds latency and doesn't improve quality for pipeline bots
+        const soulContent = `You are a ${botDef.role}. ${botDef.task}\n\nYou are part of a swarm pipeline working on: ${task}\n\nRULES:\n- ONLY state facts that appear in the provided source data.\n- NEVER fabricate, invent, or guess information.\n- If the source data is insufficient, say so clearly.\n- Be concise and factual.`;
 
-        // Build the prompt: context (first bot) or previous output (subsequent bots)
-        let userPrompt = botDef.task;
+        // Build the prompt with grounding instructions
+        const groundingRule = context
+          ? '\n\nCRITICAL: ONLY use information from the source data provided. Do NOT make up, fabricate, or guess any facts, numbers, scores, names, or dates. If the source data does not contain the answer, say "The available data does not include this information" — NEVER invent data.'
+          : '';
+
+        let userPrompt = botDef.task + groundingRule;
         if (idx === 0 && context) {
-          userPrompt = `Here is the context data:\n\n${context}\n\nYour task: ${botDef.task}`;
+          userPrompt = `## Source Data (from web search)\n\n${context}\n\n## Your Task\n${botDef.task}${groundingRule}`;
         } else if (idx > 0 && previousOutput) {
-          userPrompt = `Here is the ${botDefs[idx - 1].role}'s output:\n\n${previousOutput}\n\nYour task: ${botDef.task}`;
+          // Pass BOTH the previous bot's output AND the original source data
+          const sourceSection = context ? `\n\n## Original Source Data\n${context}` : '';
+          userPrompt = `## ${botDefs[idx - 1]!.role}'s output\n\n${previousOutput}${sourceSection}\n\n## Your Task\n${botDef.task}${groundingRule}`;
         }
 
         console.log(`[swarm] ${botDef.role} (${providerName}/${model}) — processing...`);
@@ -1873,8 +2072,9 @@ You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS run a
 
 When a user asks ANYTHING that isn't fleet management or small talk, you MUST:
 1. web_search first (if the task needs real-world info)
-2. swarm_task — pass web_search results as context, define 2-3 bots in pipeline order
-3. Present the swarm's final result as your reply
+2. fetch_url — pick 1-2 of the most relevant URLs from search results and fetch their full content. This gives you REAL DATA, not just link titles.
+3. swarm_task — pass the fetched content as context, define 2-3 bots in pipeline order
+4. Present the swarm's final result as your reply
 
 swarm_task does EVERYTHING in one call: generates souls, chains LLM calls, returns the final output. No deploy, no bot_task, no cleanup needed.
 
@@ -1883,13 +2083,16 @@ ONLY answer directly (without swarm) for:
 - "spawn X" / "destroy X" / "restart X" → fleet management tools
 - "hi" / "hello" / greetings → short greeting
 
-EVERYTHING ELSE = web_search → swarm_task → present result.
+EVERYTHING ELSE = web_search → fetch_url (1-2 URLs) → swarm_task → present result.
+web_search only returns link titles/snippets — NOT enough data. You MUST fetch_url to get actual content before passing to the swarm.
 You are the commander, not the worker. The swarm does the work.
 
 ## CRITICAL RULES
 - NEVER make up information. NEVER fabricate data. Always use web_search for facts.
-- ALWAYS pass web_search results into swarm_task's context parameter.
+- ALWAYS pass the FULL web_search result JSON into swarm_task's context parameter — not a summary, the raw JSON string.
+- web_search returns link titles and snippets, NOT full page content. If the snippets don't contain enough detail, tell the user what you found and explain the limitation — do NOT guess or fill gaps.
 - Present the swarm's result directly. Don't describe the pipeline process to the user.
+- If the swarm says "data not available" or similar, relay that honestly — never override with fabricated data.
 - Be concise and action-oriented.
 
 ## Current Fleet State
@@ -1946,9 +2149,21 @@ Example: User asks "analyze competitor pricing"
 
 IMPORTANT: Always pass web_search results as the "context" parameter. The first bot receives this context automatically.
 
+## Dynamic Teams (deploy_team)
+Use deploy_team to create custom persistent bot teams for any task. YOU design the team:
+- Choose roles based on the task (researcher, writer, analyst, reviewer, etc.)
+- Pick providers: spread across Groq models to avoid rate limits
+- Set styles per role (technical, creative, formal, etc.)
+- The tool generates AI-powered souls for each role automatically
+- Bots persist and can be interacted with via Telegram
+
+When to use which:
+- swarm_task: Quick pipeline — ephemeral bots, results chain, one-shot tasks
+- deploy_team: Persistent team — bots stay alive, each has own soul + Telegram
+- swarm_deploy: Pre-built templates only (use swarm_list to see available)
+
 ## Swarm Templates (Pre-built)
 swarm_deploy uses pre-built JSON templates for common team types. Use swarm_list to see available templates.
-Only use swarm_deploy for standard templates. For everything else, use swarm_task.
 
 ## Web Search
 You have a built-in web_search tool for real-time information. Use it for news, research, current events.

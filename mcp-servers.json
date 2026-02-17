@@ -9,6 +9,24 @@
       "scope": "shared",
       "description": "Z.AI vision tools — UI analysis, OCR, error diagnosis, diagrams"
     },
+    "web-reader": {
+      "type": "http",
+      "url": "https://api.z.ai/api/mcp/web_reader/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GLM_CODING_API_KEY}"
+      },
+      "scope": "shared",
+      "description": "Z.AI web reader — fetch full page content from any URL"
+    },
+    "web-search": {
+      "type": "http",
+      "url": "https://api.z.ai/api/mcp/web_search_prime/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GLM_CODING_API_KEY}"
+      },
+      "scope": "shared",
+      "description": "Z.AI web search — search the web with rich snippets"
+    },
     "minimax": {
       "command": "uvx",
       "args": ["minimax-mcp"],
