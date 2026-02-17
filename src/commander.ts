@@ -760,6 +760,43 @@ app.listen(PORT, () => {
     console.error('[CMD] MCP hub initialization failed:', err);
   });
 
+  // Auto-spawn permanent bots from DB
+  apiClient.getBots().then(async (dbBots) => {
+    const permanent = dbBots.filter((b) => b.is_permanent);
+    console.log(`[CMD] Auto-spawning ${permanent.length} permanent bot(s)...`);
+
+    for (const bot of permanent) {
+      const preset = bot.metadata?.provider ? resolveProvider(bot.metadata.provider as string) : undefined;
+      const config: BotConfig = {
+        name: bot.name,
+        soulName: bot.soul_name,
+        isPermanent: true,
+        ttlSeconds: null,
+        openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
+        openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
+        model: (bot.metadata?.model as string) || preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash',
+        providerPreset: bot.metadata?.provider as string,
+        telegramBotToken: (bot.metadata?.telegram_token as string) || '',
+        telegramAllowFrom: (bot.metadata?.telegram_allow_from as string) || '',
+        clientId: bot.client_id,
+        workspaceDir: '',
+      };
+
+      try {
+        await processManager.spawnBot(config);
+        console.log(`[CMD] ✓ ${bot.name} spawned`);
+      } catch (err) {
+        console.warn(`[CMD] ✗ ${bot.name} spawn failed:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    // Broadcast initial fleet state
+    const enrichedBots = await apiClient.getBots();
+    broadcastSSE('fleet:update', enrichedBots);
+  }).catch((err) => {
+    console.warn('[CMD] Auto-spawn failed (PostgREST may be down):', err instanceof Error ? err.message : err);
+  });
+
   // Broadcast fleet updates every 30s
   setInterval(async () => {
     try {

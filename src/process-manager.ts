@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
@@ -111,7 +111,8 @@ export interface BotProcessInfo {
 
 const DATA_DIR = process.env.PICOARMY_DATA_DIR || path.join(process.cwd(), 'data');
 const BOTS_DIR = path.join(DATA_DIR, 'bots');
-const PICOBOT_BIN = process.env.PICOBOT_BIN || 'picobot';
+const PICOBOT_BIN_RAW = process.env.PICOBOT_BIN || 'picobot';
+const PICOBOT_BIN = PICOBOT_BIN_RAW.startsWith('/') ? PICOBOT_BIN_RAW : path.resolve(process.cwd(), PICOBOT_BIN_RAW);
 const PID_DIR = path.join(DATA_DIR, 'pids');
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_DELAY_MS = 5000;
@@ -421,7 +422,6 @@ export class ProcessManager extends EventEmitter {
           }
         } else {
           // macOS: use ps to get RSS in KB
-          const { execSync } = require('child_process');
           const output = execSync(`ps -o rss= -p ${bot.pid}`, { encoding: 'utf-8' }).trim();
           if (output) {
             memoryMb = Math.floor(parseInt(output, 10) / 1024);

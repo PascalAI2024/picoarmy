@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# picobot — thin wrapper that runs src/picobot.ts via tsx
+# ProcessManager spawns this as: picobot gateway
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+exec npx --prefix "$PROJECT_DIR" tsx "$PROJECT_DIR/src/picobot.ts" "$@"
