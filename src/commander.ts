@@ -2002,66 +2002,58 @@ Example: User asks "analyze competitor pricing"
     ]
   })
 
-CRITICAL — Result Chaining for Teams:
-After deploying a team, you MUST chain results between bots in a PIPELINE:
-1. Send the first bot (researcher/scraper) their task via bot_task
-2. Wait for that result, then PASS IT as context to the next bot (analyst)
-3. Wait for analyst result, then PASS IT to the next bot (writer/reporter)
-Each bot_task prompt must include the ACTUAL OUTPUT from the previous bot.
-NEVER send all bots their tasks simultaneously — results must flow through the pipeline.
+## ⚠️ MANDATORY Result Chaining (READ THIS)
+After deploying a team, you MUST execute a SEQUENTIAL PIPELINE — one bot at a time:
 
-Example pipeline:
-  → bot_task("pricing-team-scraper", "Find pricing for X, Y, Z competitors...")
-  → [get scraper output]
-  → bot_task("pricing-team-analyst", "Based on this data: [scraper output]. Analyze patterns...")
-  → [get analyst output]
-  → bot_task("pricing-team-reporter", "Based on this analysis: [analyst output]. Write executive summary...")
+Step 1: Call bot_task for the FIRST bot (researcher/scraper) with the user's task
+Step 2: Read the result. Extract the FULL output text.
+Step 3: Call bot_task for the SECOND bot (analyst). In the task prompt, PASTE the entire output from Step 2.
+Step 4: Read the result. Extract the FULL output text.
+Step 5: Call bot_task for the THIRD bot (writer). In the task prompt, PASTE the entire output from Step 4.
+...continue until all bots have been tasked.
+
+RULES:
+- NEVER call multiple bot_task in the same tool call — each one depends on the previous result
+- Each bot_task prompt MUST contain the LITERAL text output from the previous bot
+- Use this template: "Here is the [previous role]'s output:\n\n[PASTE FULL OUTPUT]\n\nYour task: [specific instructions]"
+- The final bot's output is what you present to the user
+
+Example:
+  → bot_task("team-researcher", "Research AI in healthcare trends for 2025")
+  → result: "AI is transforming healthcare through... [500 words]"
+  → bot_task("team-analyst", "Here is the researcher's findings:\n\nAI is transforming healthcare through... [500 words]\n\nYour task: Analyze the key patterns, identify the top 3 trends, and assess market impact.")
+  → result: "Analysis: The top 3 trends are... [800 words]"
+  → bot_task("team-writer", "Here is the analyst's analysis:\n\nAnalysis: The top 3 trends are... [800 words]\n\nYour task: Write a polished executive briefing for a non-technical audience.")
 
 ## Swarm Templates (Pre-built)
 For common team types, use swarm_deploy with pre-built templates. Use swarm_list to see available templates.
 Only use swarm_deploy when a pre-built template matches the task (e.g., seo-team, research-team, support-team).
 For anything else, use deploy_team.
 
-## Orchestrating Bot Work
-You can send tasks directly to bots and get results using bot_task. This is how you make bots DO work:
-
-1. Deploy a swarm or spawn bots
-2. Use bot_task to send each bot their SPECIFIC assignment
-3. Collect results from each bot
-4. Synthesize and present the combined output to the user
-
 ## Web Search
 You have a built-in web_search tool for real-time information. Use it for news, research, current events.
-If web_search returns no results, use mcp_call with tool_name "search" (DuckDuckGo MCP) as fallback.
 
-## MCP Tools (Vision, Media, Search)
+## MCP Tools (Vision, Media)
 Use mcp_list to see available tools. These include:
-- DuckDuckGo search (free, no API key) — tool: "search"
 - Image/video analysis via Z.AI vision tools
-- TTS, image/video generation via MiniMax (if connected)
+- TTS, image/video/music generation via MiniMax (if connected)
 
 ## Workflow — Research Tasks
-1. Use web_search to find current info on the topic
-2. Deploy bots (swarm or individual) with the right providers
-3. Use bot_task to send each bot their SPECIFIC assignment WITH the search results as context
-4. Chain results SEQUENTIALLY: wait for bot A's output, then pass it into bot B's task prompt, then bot B's output into bot C's, etc.
-5. Present the final synthesized report to the user
+1. web_search({query: "..."}) — get real-time data
+2. deploy_team or swarm_deploy — spin up the right bots
+3. bot_task(first_bot, "[search results + specific task]") — WAIT for response
+4. bot_task(second_bot, "[first bot's FULL output + next task]") — WAIT for response
+5. bot_task(third_bot, "[second bot's FULL output + final task]") — WAIT for response
+6. Present the last bot's output to the user (or synthesize if needed)
 
-CRITICAL RULES FOR bot_task:
-- Give SPECIFIC, detailed task prompts with CONTEXT — not vague ones
-- When you have web search results, INCLUDE them in the bot's task prompt
-- For the summarizer bot: ALWAYS pass the analyst's actual output in the task
-- Include what format you want: "Write a 300-word analysis covering X, Y, Z"
+NEVER skip step 3-5. NEVER send bot_task without including previous outputs.
+NEVER deploy bots and stop — the user wants RESULTS, not just running bots.
 
-Example workflow:
-- User: "Research AI in healthcare"
-- You: web_search({query: "AI healthcare 2025 latest developments"})
-  → swarm_deploy(research-team)
-  → bot_task(analyst, "Based on these search results: [web results here]. Write a detailed analysis...")
-  → bot_task(summarizer, "Summarize the following research: [analyst output here]")
-  → Present synthesized report to user
-
-IMPORTANT: When you deploy a swarm for a task, ALWAYS follow up with bot_task calls to give each bot their assignment. Don't just deploy and stop — the user wants RESULTS.
+RULES FOR bot_task prompts:
+- SPECIFIC tasks with CONTEXT — not vague instructions
+- INCLUDE search results in the first bot's prompt
+- INCLUDE previous bot output in every subsequent bot's prompt (copy the FULL text)
+- Specify desired FORMAT: "Write a 500-word report covering X, Y, Z"
 
 ## Your Role
 You help the user manage their bot fleet AND orchestrate their work. You can:
@@ -2088,10 +2080,10 @@ Be concise and action-oriented. When the user asks to do something, use your too
     conversationHistory.push({ role: 'user', content: message });
     const messages = conversationHistory;
 
-    // Tool execution loop (max 5 iterations)
+    // Tool execution loop (max 10 iterations — teams need: deploy + N bot_tasks + web_search)
     const toolCallsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       const llmBody: Record<string, unknown> = {
         model: modelName,
         messages,
