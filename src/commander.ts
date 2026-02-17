@@ -1026,18 +1026,44 @@ app.listen(PORT, () => {
       }
     }
 
-    // Broadcast initial fleet state
-    const enrichedBots = await apiClient.getBots();
+    // Broadcast initial fleet state (merged with process info)
+    const allBots = await apiClient.getBots();
+    const fleet = processManager.getFleetStatus();
+    const enrichedBots = allBots.map((dbBot) => {
+      const processInfo = fleet.bots.find((p) => p.name === dbBot.name);
+      return {
+        ...dbBot,
+        pid: processInfo?.pid ?? null,
+        status: processInfo?.status ?? dbBot.status,
+        uptime_seconds: processInfo?.uptime ?? dbBot.uptime_seconds,
+        memory_mb: processInfo?.memoryMb ?? dbBot.memory_mb,
+        restart_count: processInfo?.restartCount ?? 0,
+      };
+    });
     broadcastSSE('fleet:update', enrichedBots);
   }).catch((err) => {
     console.warn('[CMD] Auto-spawn failed (PostgREST may be down):', err instanceof Error ? err.message : err);
   });
 
-  // Broadcast fleet updates every 30s
+  // Broadcast fleet updates every 30s (same merge as GET /api/fleet)
   setInterval(async () => {
     try {
-      const bots = await apiClient.getBots();
-      broadcastSSE('fleet:update', bots);
+      const dbBots = await apiClient.getBots();
+      const fleetStatus = processManager.getFleetStatus();
+
+      const enriched = dbBots.map((dbBot) => {
+        const processInfo = fleetStatus.bots.find((p) => p.name === dbBot.name);
+        return {
+          ...dbBot,
+          pid: processInfo?.pid ?? null,
+          status: processInfo?.status ?? dbBot.status,
+          uptime_seconds: processInfo?.uptime ?? dbBot.uptime_seconds,
+          memory_mb: processInfo?.memoryMb ?? dbBot.memory_mb,
+          restart_count: processInfo?.restartCount ?? 0,
+        };
+      });
+
+      broadcastSSE('fleet:update', enriched);
     } catch {
       // Silent — PostgREST may be down
     }
