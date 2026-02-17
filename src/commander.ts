@@ -1642,6 +1642,23 @@ Be concise and action-oriented. When the user asks to do something, use your too
       if (!llmResponse.ok) {
         const errorText = await llmResponse.text();
         console.error(`[CMD Chat] LLM error (${llmResponse.status}):`, errorText.slice(0, 200));
+
+        // On 400 tool validation errors, retry without tools so user still gets a response
+        if (llmResponse.status === 400 && errorText.includes('tool')) {
+          console.log('[CMD Chat] Tool validation error — retrying without tools');
+          const retryBody = { model: modelName, messages, max_completion_tokens: 4096 };
+          const retryResponse = await fetch(`${preset.apiBase}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${preset.apiKey}` },
+            body: JSON.stringify(retryBody),
+          });
+          if (retryResponse.ok) {
+            const retryData = await retryResponse.json() as { choices?: Array<{ message?: { content?: string | null } }> };
+            const reply = retryData.choices?.[0]?.message?.content || '(no response)';
+            return res.json({ reply, toolCalls: toolCallsLog, model: modelName, provider: providerName });
+          }
+        }
+
         return res.status(502).json({
           error: `LLM provider returned ${llmResponse.status}`,
           detail: errorText.slice(0, 200),
