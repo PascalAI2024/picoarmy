@@ -36,6 +36,12 @@ export interface SoulTemplate {
   description: string;
 }
 
+export interface Skill {
+  name: string;
+  description: string;
+  content?: string;
+}
+
 export interface ProviderPreset {
   name: string;
   model: string;

@@ -6,8 +6,9 @@ import { LogStream } from '../telemetry/LogStream';
 import { ActivityChart } from '../telemetry/ActivityChart';
 import { ChatTab } from './ChatTab';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate } from '../../lib/types';
-import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool, updateSoul, restartBot } from '../../lib/api';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
+import type { Bot, ProviderPreset, MCPTool, BotSettings, SoulTemplate, Skill } from '../../lib/types';
+import { fetchProviders, fetchTools, updateBotSettings, fetchSouls, fetchSoulContent, deploySoul, callTool, updateSoul, restartBot, fetchSkills, fetchBotSkills, deploySkill, removeSkill } from '../../lib/api';
 import { formatUptime, formatRelativeTime, formatMemory, formatTTL } from '../../lib/format';
 
 interface BotDetailProps {
@@ -38,6 +39,13 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
   const [savingSoul, setSavingSoul] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>([]);
+  const [deployedSkills, setDeployedSkills] = useState<Skill[]>([]);
+  const [loadingSkills, setLoadingSkills] = useState(false);
+  const [deployingSkill, setDeployingSkill] = useState(false);
+  const [removingSkill, setRemovingSkill] = useState<string | null>(null);
+  const [showSkillDialog, setShowSkillDialog] = useState(false);
+  const [selectedSkillToDeploy, setSelectedSkillToDeploy] = useState('');
 
   useEffect(() => {
     const loadData = async () => {
@@ -71,6 +79,23 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
       console.error('Failed to load tools:', error);
     } finally {
       setLoadingTools(false);
+    }
+  };
+
+  const loadSkills = async () => {
+    setLoadingSkills(true);
+    try {
+      const [available, deployed] = await Promise.all([
+        fetchSkills(),
+        fetchBotSkills(bot.id).catch(() => []), // Fallback to empty if endpoint not implemented yet
+      ]);
+      setAvailableSkills(available);
+      setDeployedSkills(deployed);
+    } catch (error) {
+      console.error('Failed to load skills:', error);
+      toast.error('Failed to load skills');
+    } finally {
+      setLoadingSkills(false);
     }
   };
 
@@ -176,6 +201,37 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
         provider: provider.name,
         model: provider.model,
       }));
+    }
+  };
+
+  const handleDeploySkill = async () => {
+    if (!selectedSkillToDeploy) return;
+    setDeployingSkill(true);
+    try {
+      await deploySkill(bot.id, selectedSkillToDeploy);
+      toast.success(`Skill "${selectedSkillToDeploy}" deployed`);
+      setSelectedSkillToDeploy('');
+      setShowSkillDialog(false);
+      await loadSkills(); // Refresh deployed skills
+    } catch (error) {
+      console.error('Failed to deploy skill:', error);
+      toast.error('Failed to deploy skill');
+    } finally {
+      setDeployingSkill(false);
+    }
+  };
+
+  const handleRemoveSkill = async (skillName: string) => {
+    setRemovingSkill(skillName);
+    try {
+      await removeSkill(bot.id, skillName);
+      toast.success(`Skill "${skillName}" removed`);
+      await loadSkills(); // Refresh deployed skills
+    } catch (error) {
+      console.error('Failed to remove skill:', error);
+      toast.error('Failed to remove skill');
+    } finally {
+      setRemovingSkill(null);
     }
   };
 
@@ -410,31 +466,168 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
           </div>
         </TabsContent>
 
-        <TabsContent value="skills" className="space-y-4">
-          <div className="panel flex flex-col items-center justify-center py-12">
-            <div className="w-16 h-16 mb-4 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center">
-              <svg
-                className="w-8 h-8 text-accent-cyan"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
+        <TabsContent value="skills" className="space-y-4" onFocus={() => {
+          if (availableSkills.length === 0 && !loadingSkills) loadSkills();
+        }}>
+          {/* Header with Add Skill button */}
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-text-muted uppercase tracking-wider">
+              Deployed Skills ({deployedSkills.length})
             </div>
-            <h3 className="mono-data text-lg text-text-primary mb-2">No Skills Deployed</h3>
-            <p className="text-sm text-text-secondary text-center max-w-md mb-1">
-              Skills extend bot capabilities with custom commands and behaviors.
-            </p>
-            <p className="text-xs text-text-muted text-center max-w-md">
-              Skills library coming soon — deploy pre-built skills or create your own.
-            </p>
+            <button
+              onClick={() => {
+                if (availableSkills.length === 0) loadSkills();
+                setShowSkillDialog(true);
+              }}
+              className="
+                px-3 py-1 text-xs font-medium
+                bg-accent-cyan/20 border border-accent-cyan
+                text-accent-cyan
+                hover:bg-accent-cyan/30
+                transition-colors
+              "
+            >
+              + Add Skill
+            </button>
           </div>
+
+          {/* Deployed Skills List */}
+          {loadingSkills ? (
+            <div className="panel text-center py-12">
+              <p className="text-text-muted">Loading skills...</p>
+            </div>
+          ) : deployedSkills.length === 0 ? (
+            <div className="panel flex flex-col items-center justify-center py-12">
+              <div className="w-16 h-16 mb-4 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 flex items-center justify-center">
+                <svg
+                  className="w-8 h-8 text-accent-cyan"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+              </div>
+              <h3 className="mono-data text-lg text-text-primary mb-2">No Skills Deployed</h3>
+              <p className="text-sm text-text-secondary text-center max-w-md mb-3">
+                Skills extend bot capabilities with custom commands and behaviors.
+              </p>
+              <button
+                onClick={() => {
+                  if (availableSkills.length === 0) loadSkills();
+                  setShowSkillDialog(true);
+                }}
+                className="
+                  px-4 py-2 text-sm font-medium
+                  bg-accent-cyan/20 border border-accent-cyan
+                  text-accent-cyan
+                  hover:bg-accent-cyan/30
+                  transition-colors
+                "
+              >
+                Deploy Your First Skill
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {deployedSkills.map((skill) => (
+                <div key={skill.name} className="panel">
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="mono-data font-semibold text-base text-text-primary">
+                      {skill.name}
+                    </h3>
+                    <button
+                      onClick={() => setRemovingSkill(skill.name)}
+                      className="
+                        px-2 py-1 text-xs
+                        bg-status-offline/20 border border-status-offline
+                        text-status-offline
+                        hover:bg-status-offline/30
+                        transition-colors
+                      "
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <p className="text-sm text-text-secondary">
+                    {skill.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add Skill Dialog */}
+          <Dialog open={showSkillDialog} onOpenChange={setShowSkillDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Deploy Skill to {bot.name}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <label className="block text-sm text-text-secondary mb-2">
+                    Select a skill from the library
+                  </label>
+                  <select
+                    value={selectedSkillToDeploy}
+                    onChange={(e) => setSelectedSkillToDeploy(e.target.value)}
+                    className="
+                      w-full px-3 py-2
+                      bg-bg-surface border border-border
+                      text-text-primary
+                      focus:border-accent-cyan focus:outline-none
+                      transition-colors
+                    "
+                  >
+                    <option value="">Choose a skill...</option>
+                    {availableSkills
+                      .filter((s) => !deployedSkills.some((d) => d.name === s.name))
+                      .map((skill) => (
+                        <option key={skill.name} value={skill.name}>
+                          {skill.name} - {skill.description}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      setShowSkillDialog(false);
+                      setSelectedSkillToDeploy('');
+                    }}
+                    className="
+                      px-4 py-2 text-sm
+                      bg-bg-surface border border-border
+                      text-text-secondary
+                      hover:text-text-primary hover:border-border-hover
+                      transition-colors
+                    "
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeploySkill}
+                    disabled={!selectedSkillToDeploy || deployingSkill}
+                    className="
+                      px-4 py-2 text-sm font-medium
+                      bg-accent-cyan/20 border border-accent-cyan
+                      text-accent-cyan
+                      hover:bg-accent-cyan/30
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      transition-colors
+                    "
+                  >
+                    {deployingSkill ? 'Deploying...' : 'Deploy'}
+                  </button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="settings" className="space-y-4">
@@ -711,6 +904,18 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
         cancelLabel="Cancel"
         variant="default"
         onConfirm={confirmRestart}
+      />
+
+      {/* Remove Skill Confirmation */}
+      <ConfirmDialog
+        open={removingSkill !== null}
+        onOpenChange={(open) => !open && setRemovingSkill(null)}
+        title="Remove Skill"
+        description={removingSkill ? `Remove "${removingSkill}" from this bot? The skill will remain in the library.` : ''}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={() => removingSkill && handleRemoveSkill(removingSkill)}
       />
     </div>
   );

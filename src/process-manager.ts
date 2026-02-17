@@ -417,7 +417,7 @@ export class ProcessManager extends EventEmitter {
           // Read RSS from /proc/<pid>/status (in kB)
           const statusFile = fs.readFileSync(`/proc/${bot.pid}/status`, 'utf-8');
           const match = statusFile.match(/VmRSS:\s+(\d+)\s+kB/);
-          if (match) {
+          if (match && match[1]) {
             memoryMb = Math.floor(parseInt(match[1], 10) / 1024);
           }
         } else {

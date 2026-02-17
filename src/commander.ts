@@ -365,7 +365,7 @@ app.post('/api/fleet/:id/restart', async (req: Request, res: Response) => {
 
     // Respawn process with same config
     const preset = bot.metadata?.provider ? resolveProvider(bot.metadata.provider as string) : undefined;
-    const config: BotConfig = {
+    const baseConfig: BotConfig = {
       name: bot.name,
       soulName: bot.soul_name,
       isPermanent: bot.is_permanent,
@@ -373,12 +373,19 @@ app.post('/api/fleet/:id/restart', async (req: Request, res: Response) => {
       openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
       openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || 'https://api.minimax.io/v1',
       model: (bot.metadata?.model as string) || preset?.model || process.env.PICOBOT_MODEL || 'MiniMax-M2',
-      providerPreset: bot.metadata?.provider as string,
       telegramBotToken: (bot.metadata?.telegram_token as string) || '',
       telegramAllowFrom: (bot.metadata?.telegram_allow_from as string) || '',
-      clientId: bot.client_id,
       workspaceDir: '',
     };
+
+    if (bot.metadata?.provider) {
+      baseConfig.providerPreset = bot.metadata.provider as string;
+    }
+    if (bot.client_id) {
+      baseConfig.clientId = bot.client_id;
+    }
+
+    const config = baseConfig;
 
     try {
       await processManager.spawnBot(config);
@@ -468,22 +475,28 @@ app.get('/api/fleet/:id/soul', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/fleet/:id/soul — Deploy soul to bot
+// POST /api/fleet/:id/soul — Deploy soul to bot (by template name OR direct content)
 app.post('/api/fleet/:id/soul', async (req: Request, res: Response) => {
   try {
-    const { soul_name } = req.body;
-    if (!soul_name) return res.status(400).json({ error: 'soul_name is required' });
+    const { soul_name, content } = req.body;
+    if (!soul_name && !content) return res.status(400).json({ error: 'soul_name or content is required' });
 
     const bot = await apiClient.getBot(req.params.id!);
     if (!bot) return res.status(404).json({ error: 'Bot not found' });
 
-    // Read soul template
-    const soulPath = path.join(process.cwd(), 'souls', `${soul_name}.md`);
-    if (!fs.existsSync(soulPath)) {
-      return res.status(404).json({ error: `Soul template "${soul_name}" not found` });
-    }
+    let soulContent: string;
 
-    const soulContent = fs.readFileSync(soulPath, 'utf-8');
+    if (content) {
+      // Direct content editing — write content as the bot's SOUL.md
+      soulContent = content;
+    } else {
+      // Template deployment — read from souls/ directory
+      const soulPath = path.join(process.cwd(), 'souls', `${soul_name}.md`);
+      if (!fs.existsSync(soulPath)) {
+        return res.status(404).json({ error: `Soul template "${soul_name}" not found` });
+      }
+      soulContent = fs.readFileSync(soulPath, 'utf-8');
+    }
 
     // Deploy to bot workspace via process manager
     try {
@@ -492,7 +505,7 @@ app.post('/api/fleet/:id/soul', async (req: Request, res: Response) => {
       // Bot process may not exist in dev
     }
 
-    res.json({ success: true, bot_id: req.params.id, soul_name });
+    res.json({ success: true, bot_id: req.params.id, soul_name: soul_name || 'custom' });
   } catch (error) {
     console.error('Error updating soul:', error);
     res.status(500).json({ error: 'Failed to update soul' });
@@ -599,6 +612,206 @@ app.delete('/api/souls/:name', (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error deleting soul:', error);
     res.status(500).json({ error: 'Failed to delete soul' });
+  }
+});
+
+// POST /api/fleet/:id/command — Send command to bot's COMMANDS.md
+app.post('/api/fleet/:id/command', async (req: Request, res: Response) => {
+  try {
+    const botId = req.params.id!;
+    const { command, args } = req.body;
+
+    if (!command) return res.status(400).json({ error: 'command is required' });
+
+    const bot = await apiClient.getBot(botId);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    // Format command block with timestamp and args
+    const timestamp = new Date().toISOString();
+    const commandBlock = `
+---
+COMMAND: ${command}
+TIMESTAMP: ${timestamp}
+${args ? `ARGS: ${JSON.stringify(args)}` : ''}
+---
+`;
+
+    // Write to bot's COMMANDS.md via process manager
+    try {
+      processManager.sendCommand(bot.name, commandBlock);
+      res.json({ success: true, bot_id: botId, command, timestamp });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return res.status(404).json({ error: message });
+    }
+  } catch (error) {
+    console.error('Error sending command:', error);
+    res.status(500).json({ error: 'Failed to send command' });
+  }
+});
+
+// GET /api/skills — List available skills from skills/ directory
+app.get('/api/skills', (_req: Request, res: Response) => {
+  try {
+    const skillsDir = path.join(process.cwd(), 'skills');
+    if (!fs.existsSync(skillsDir)) {
+      return res.json([]);
+    }
+
+    const skills = fs.readdirSync(skillsDir)
+      .filter((f) => {
+        const skillPath = path.join(skillsDir, f);
+        return fs.statSync(skillPath).isDirectory();
+      })
+      .map((skillName) => {
+        const skillMdPath = path.join(skillsDir, skillName, 'SKILL.md');
+        let description = skillName;
+
+        if (fs.existsSync(skillMdPath)) {
+          const content = fs.readFileSync(skillMdPath, 'utf-8');
+          const match = content.match(/^#\s+(.+)/m);
+          if (match && match[1]) description = match[1];
+        }
+
+        return {
+          name: skillName,
+          description,
+        };
+      });
+
+    res.json(skills);
+  } catch (error) {
+    console.error('Error fetching skills:', error);
+    res.status(500).json({ error: 'Failed to fetch skills' });
+  }
+});
+
+// GET /api/skills/:name — Get skill details
+app.get('/api/skills/:name', (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    const skillPath = path.join(process.cwd(), 'skills', name, 'SKILL.md');
+
+    if (!fs.existsSync(skillPath)) {
+      return res.status(404).json({ error: `Skill "${name}" not found` });
+    }
+
+    const content = fs.readFileSync(skillPath, 'utf-8');
+    const descMatch = content.match(/^#\s+(.+)/m);
+    const description = (descMatch && descMatch[1]) ? descMatch[1] : name;
+
+    res.json({ name, description, content });
+  } catch (error) {
+    console.error('Error fetching skill:', error);
+    res.status(500).json({ error: 'Failed to fetch skill' });
+  }
+});
+
+// GET /api/fleet/:id/skills — List skills deployed to a bot
+app.get('/api/fleet/:id/skills', async (req: Request, res: Response) => {
+  try {
+    const bot = await apiClient.getBot(req.params.id!);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const botProcess = processManager.getBot(bot.name);
+    if (!botProcess) {
+      return res.json([]); // No process = no deployed skills
+    }
+
+    const skillsDir = path.join(botProcess.config.workspaceDir, 'workspace', 'skills');
+    if (!fs.existsSync(skillsDir)) {
+      return res.json([]);
+    }
+
+    const skills = fs.readdirSync(skillsDir)
+      .filter((f) => {
+        const skillPath = path.join(skillsDir, f);
+        return fs.statSync(skillPath).isDirectory();
+      })
+      .map((skillName) => {
+        const skillMdPath = path.join(skillsDir, skillName, 'SKILL.md');
+        let description = skillName;
+
+        if (fs.existsSync(skillMdPath)) {
+          const content = fs.readFileSync(skillMdPath, 'utf-8');
+          const match = content.match(/^#\s+(.+)/m);
+          if (match && match[1]) description = match[1];
+        }
+
+        return { name: skillName, description };
+      });
+
+    res.json(skills);
+  } catch (error) {
+    console.error('Error fetching bot skills:', error);
+    res.status(500).json({ error: 'Failed to fetch bot skills' });
+  }
+});
+
+// POST /api/fleet/:id/skills — Deploy a skill to a bot
+app.post('/api/fleet/:id/skills', async (req: Request, res: Response) => {
+  try {
+    const botId = req.params.id!;
+    const { skill_name } = req.body;
+
+    if (!skill_name) return res.status(400).json({ error: 'skill_name is required' });
+
+    const bot = await apiClient.getBot(botId);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    // Read skill content
+    const skillPath = path.join(process.cwd(), 'skills', skill_name, 'SKILL.md');
+    if (!fs.existsSync(skillPath)) {
+      return res.status(404).json({ error: `Skill "${skill_name}" not found` });
+    }
+
+    const skillContent = fs.readFileSync(skillPath, 'utf-8');
+
+    // Deploy to bot workspace via process manager
+    try {
+      processManager.deploySkill(bot.name, skill_name, skillContent);
+      res.json({ success: true, bot_id: botId, skill_name });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return res.status(404).json({ error: message });
+    }
+  } catch (error) {
+    console.error('Error deploying skill:', error);
+    res.status(500).json({ error: 'Failed to deploy skill' });
+  }
+});
+
+// DELETE /api/fleet/:id/skills/:skillName — Remove skill from bot
+app.delete('/api/fleet/:id/skills/:skillName', async (req: Request, res: Response) => {
+  try {
+    const botId = req.params.id!;
+    const skillName = req.params.skillName;
+
+    if (!skillName) return res.status(400).json({ error: 'skillName is required' });
+
+    const bot = await apiClient.getBot(botId);
+    if (!bot) return res.status(404).json({ error: 'Bot not found' });
+
+    const botProcess = processManager.getBot(bot.name);
+    if (!botProcess) {
+      return res.status(404).json({ error: 'Bot process not found' });
+    }
+
+    const skillDir = path.join(botProcess.config.workspaceDir, 'workspace', 'skills', skillName);
+    if (!fs.existsSync(skillDir)) {
+      return res.status(404).json({ error: `Skill "${skillName}" not deployed to this bot` });
+    }
+
+    // Remove skill directory
+    fs.rmSync(skillDir, { recursive: true, force: true });
+    console.log(`[CMD] Skill "${skillName}" removed from "${bot.name}"`);
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error removing skill:', error);
+    res.status(500).json({ error: 'Failed to remove skill' });
   }
 });
 
@@ -783,7 +996,7 @@ app.listen(PORT, () => {
 
     for (const bot of permanent) {
       const preset = bot.metadata?.provider ? resolveProvider(bot.metadata.provider as string) : undefined;
-      const config: BotConfig = {
+      const baseConfig: BotConfig = {
         name: bot.name,
         soulName: bot.soul_name,
         isPermanent: true,
@@ -791,12 +1004,19 @@ app.listen(PORT, () => {
         openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
         openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
         model: (bot.metadata?.model as string) || preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash',
-        providerPreset: bot.metadata?.provider as string,
         telegramBotToken: (bot.metadata?.telegram_token as string) || '',
         telegramAllowFrom: (bot.metadata?.telegram_allow_from as string) || '',
-        clientId: bot.client_id,
         workspaceDir: '',
       };
+
+      if (bot.metadata?.provider) {
+        baseConfig.providerPreset = bot.metadata.provider as string;
+      }
+      if (bot.client_id) {
+        baseConfig.clientId = bot.client_id;
+      }
+
+      const config = baseConfig;
 
       try {
         await processManager.spawnBot(config);

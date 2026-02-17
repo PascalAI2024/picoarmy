@@ -100,12 +100,18 @@ function enrichBot(bot: Bot): Bot {
     (Date.now() - new Date(bot.created_at).getTime()) / 1000
   );
 
-  return {
+  const enriched: Bot = {
     ...bot,
     status,
     uptime_seconds: uptimeSeconds,
-    memory_mb: bot.memory_mb || null,
   };
+
+  // Only add memory_mb if it exists (exactOptionalPropertyTypes)
+  if (bot.memory_mb !== undefined) {
+    enriched.memory_mb = bot.memory_mb;
+  }
+
+  return enriched;
 }
 
 // API Client Methods

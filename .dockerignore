@@ -1,0 +1,35 @@
+# Node modules (will be installed during build)
+node_modules/
+src/dashboard/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Development files
+.env
+.env.*
+*.log
+
+# Build artifacts
+src/dashboard/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+.claude/
+
+# Docker
+docker-compose.yml
+Dockerfile
+
+# Database (local dev only)
+data/
+postgres_data/

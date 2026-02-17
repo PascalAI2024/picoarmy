@@ -113,4 +113,59 @@ Channels are separated to prevent race conditions between tool requests and comm
 | MCP | @modelcontextprotocol/sdk |
 | Dashboard | Vite + React + Zustand + Radix UI |
 | Agent | louisho5/picobot (Go, ~8MB) |
-| Infra | Docker Compose |
+| Infra | Docker Compose (dev) / Docker (production) |
+
+## Production Deployment
+
+PicoArmy runs as a **single Docker container** with all components inside:
+
+```
+One Container: picoarmy
+├── PostgreSQL 15      (internal :5432)
+├── PostgREST          (internal :3000)
+├── Commander          (public   :4000)
+└── N × picobot        (child processes)
+
+Volume: /data/
+├── postgres/          (PostgreSQL data)
+├── bots/{name}/       (bot workspaces)
+└── pids/              (process tracking)
+```
+
+### Build & Run
+
+```bash
+# Build the image
+docker build -t picoarmy:latest .
+
+# Run the container
+docker run -d \
+  --name picoarmy \
+  -p 4000:4000 \
+  -v picoarmy-data:/data \
+  -e POSTGRES_PASSWORD=<secure-password> \
+  -e JWT_SECRET=<min-32-chars> \
+  picoarmy:latest
+```
+
+### Environment Variables
+
+Required:
+- `POSTGRES_PASSWORD` — PostgreSQL password
+- `JWT_SECRET` — PostgREST JWT secret (min 32 chars)
+
+Optional:
+- `POSTGRES_DB` (default: `picoarmy`)
+- `POSTGRES_USER` (default: `commander`)
+- `PORT` (default: `4000`)
+
+### Dokploy Deployment
+
+Deploy to Dokploy via GitHub webhook:
+
+1. Create Dokploy application pointing to this repo
+2. Set environment variables in Dokploy (or GitHub Secrets)
+3. Push to trigger rebuild + redeploy
+4. Traefik routes domain to container port 4000
+
+**Post-deploy:** Permanent bots auto-spawn from DB registry on container startup.

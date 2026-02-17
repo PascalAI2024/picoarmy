@@ -1,6 +1,6 @@
 // API client for Commander REST endpoints
 
-import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus, ChatMessage, ChatResponse } from './types';
+import type { Bot, CreateBotData, LogEntry, SoulTemplate, ProviderPreset, MCPTool, BotSettings, MCPHubStatus, ChatMessage, ChatResponse, Skill } from './types';
 
 // Base URL for API (same origin in production, or from env in dev)
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -165,6 +165,35 @@ export async function updateBotSettings(id: string, settings: BotSettings): Prom
   });
 }
 
+// Skills API
+export async function fetchSkills(): Promise<Skill[]> {
+  return fetchJSON<Skill[]>('/api/skills');
+}
+
+export async function fetchSkillDetail(name: string): Promise<Skill> {
+  return fetchJSON<Skill>(`/api/skills/${encodeURIComponent(name)}`);
+}
+
+export async function fetchBotSkills(botId: string): Promise<Skill[]> {
+  return fetchJSON<Skill[]>(`/api/fleet/${botId}/skills`);
+}
+
+export async function deploySkill(
+  botId: string,
+  skillName: string
+): Promise<{ success: boolean; bot_id: string; skill_name: string }> {
+  return fetchJSON(`/api/fleet/${botId}/skills`, {
+    method: 'POST',
+    body: JSON.stringify({ skill_name: skillName }),
+  });
+}
+
+export async function removeSkill(botId: string, skillName: string): Promise<void> {
+  return fetchJSON<void>(`/api/fleet/${botId}/skills/${encodeURIComponent(skillName)}`, {
+    method: 'DELETE',
+  });
+}
+
 export default {
   fetchFleet,
   fetchBot,
@@ -185,4 +214,9 @@ export default {
   fetchMCPStatus,
   updateBotSettings,
   chatWithBot,
+  fetchSkills,
+  fetchSkillDetail,
+  fetchBotSkills,
+  deploySkill,
+  removeSkill,
 };
