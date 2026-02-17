@@ -16,7 +16,8 @@ import {
   SelectValue,
 } from '../ui/Select';
 import { useFleet } from '../../hooks/useFleet';
-import type { SoulTemplate } from '../../lib/types';
+import type { SoulTemplate, ProviderPreset } from '../../lib/types';
+import { fetchProviders } from '../../lib/api';
 
 interface SpawnDialogProps {
   open: boolean;
@@ -26,19 +27,26 @@ interface SpawnDialogProps {
 export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
   const [name, setName] = useState('');
   const [soul, setSoul] = useState('');
+  const [provider, setProvider] = useState('');
   const [type, setType] = useState<'permanent' | 'ephemeral'>('ephemeral');
   const [ttl, setTtl] = useState('2');
   const [souls, setSouls] = useState<SoulTemplate[]>([]);
+  const [providers, setProviders] = useState<ProviderPreset[]>([]);
   const [loading, setLoading] = useState(false);
   const { spawnBot, fetchSouls } = useFleet();
 
-  // Fetch available souls on mount
+  // Fetch available souls and providers on mount
   useEffect(() => {
     if (open) {
       fetchSouls()
         .then(setSouls)
         .catch((err) => {
           console.error('Failed to load souls:', err);
+        });
+      fetchProviders()
+        .then(p => setProviders(p.filter(pr => pr.configured)))
+        .catch((err) => {
+          console.error('Failed to load providers:', err);
         });
     }
   }, [open, fetchSouls]);
@@ -53,12 +61,14 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
         soul_name: soul,
         is_permanent: type === 'permanent',
         ttl_seconds: type === 'ephemeral' ? parseInt(ttl) * 3600 : undefined,
+        ...(provider ? { provider } : {}),
       });
 
       // Close dialog and reset form
       onOpenChange(false);
       setName('');
       setSoul('');
+      setProvider('');
       setType('ephemeral');
       setTtl('2');
     } catch (err) {
@@ -68,6 +78,8 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
       setLoading(false);
     }
   };
+
+  const selectedProvider = providers.find(p => p.name === provider);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,6 +135,30 @@ export function SpawnDialog({ open, onOpenChange }: SpawnDialogProps) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Provider */}
+          <div className="space-y-2">
+            <label htmlFor="provider" className="text-sm font-medium text-text-primary">
+              LLM Provider
+            </label>
+            <Select value={provider} onValueChange={setProvider}>
+              <SelectTrigger id="provider">
+                <SelectValue placeholder="Select provider (default: groq-scout)..." />
+              </SelectTrigger>
+              <SelectContent>
+                {providers.map((p) => (
+                  <SelectItem key={p.name} value={p.name}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedProvider && (
+              <p className="text-xs text-text-muted mono-data">
+                {selectedProvider.model} — {selectedProvider.description}
+              </p>
+            )}
           </div>
 
           {/* Type toggle */}

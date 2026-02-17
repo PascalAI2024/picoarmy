@@ -115,17 +115,20 @@ app.post('/api/fleet', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'name and soul_name are required' });
     }
 
-    // Create DB record
+    // Create DB record (with provider/model in metadata for dashboard visibility)
+    const preset = provider ? resolveProvider(provider) : undefined;
+    const effectiveModel = model || preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
     const dbBot = await apiClient.createBot({
       name,
       soul_name,
       is_permanent: is_permanent !== undefined ? is_permanent : true,
       ttl_seconds,
       client_id,
+      metadata: {
+        ...(provider ? { provider } : {}),
+        model: effectiveModel,
+      },
     });
-
-    // Resolve provider preset (e.g. 'glm-coding', 'minimax', 'glm-flash')
-    const preset = provider ? resolveProvider(provider) : undefined;
 
     // Spawn actual process (if picobot binary available)
     const config: BotConfig = {
@@ -135,7 +138,7 @@ app.post('/api/fleet', async (req: Request, res: Response) => {
       ttlSeconds: ttl_seconds ?? null,
       openaiApiKey: preset?.apiKey || provider_config?.api_key || process.env.OPENAI_API_KEY || '',
       openaiApiBase: preset?.apiBase || provider_config?.api_base || process.env.OPENAI_API_BASE || 'https://api.minimax.io/v1',
-      model: model || preset?.model || process.env.PICOBOT_MODEL || 'MiniMax-M2',
+      model: effectiveModel,
       providerPreset: provider,
       telegramBotToken: provider_config?.telegram_token || '',
       telegramAllowFrom: provider_config?.telegram_allow_from || '',
@@ -1105,19 +1108,26 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       const spawnName = args.name as string;
       const soulName = args.soul_name as string;
       const provider = args.provider as string | undefined;
-      const isPermanent = args.is_permanent !== false;
+      // Coerce is_permanent — LLMs sometimes send string "true"/"false" instead of boolean
+      const isPermanent = args.is_permanent === false || args.is_permanent === 'false' ? false : true;
+
+      const preset = provider ? resolveProvider(provider) : undefined;
+      const spawnModel = preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
 
       const dbBot = await apiClient.createBot({
         name: spawnName, soul_name: soulName,
         is_permanent: isPermanent,
+        metadata: {
+          ...(provider ? { provider } : {}),
+          model: spawnModel,
+        },
       });
 
-      const preset = provider ? resolveProvider(provider) : undefined;
       const config: BotConfig = {
         name: spawnName, soulName, isPermanent, ttlSeconds: null,
         openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
         openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
-        model: preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash',
+        model: spawnModel,
         telegramBotToken: '', telegramAllowFrom: '', workspaceDir: '',
       };
       if (provider) config.providerPreset = provider;
@@ -1253,7 +1263,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
           const dbBot = await apiClient.createBot({
             name: botName, soul_name: soulName, is_permanent: false,
             ...(clientId ? { client_id: clientId } : {}),
-            metadata: { provider: bot.provider, swarm: swarmName, role: bot.role },
+            metadata: { provider: bot.provider, model: preset?.model || 'glm-4.7-flash', swarm: swarmName, role: bot.role },
           });
 
           const botConfig: BotConfig = {

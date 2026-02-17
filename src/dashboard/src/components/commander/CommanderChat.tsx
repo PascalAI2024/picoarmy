@@ -150,7 +150,7 @@ export function CommanderChat({ open, onClose }: CommanderChatProps) {
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-1.5 mt-2">
-                {['list all bots', 'spawn a new bot', 'what providers are available?'].map((hint) => (
+                {['list all bots', 'deploy seo team', 'what swarms are available?', 'spawn a new bot'].map((hint) => (
                   <button
                     key={hint}
                     onClick={() => { setInput(hint); inputRef.current?.focus(); }}

@@ -59,8 +59,8 @@ export function BotCard({ bot, onClick }: BotCardProps) {
         </div>
       </div>
 
-      {/* Type badge */}
-      <div className="mb-3">
+      {/* Type + Provider badges */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
         <span className="
           inline-flex items-center gap-1
           px-2 py-0.5
@@ -73,6 +73,16 @@ export function BotCard({ bot, onClick }: BotCardProps) {
             <span className="text-status-idle">⏱ {formatTTL(bot.ttl_seconds)}</span>
           )}
         </span>
+        {typeof bot.metadata?.provider === 'string' && (
+          <span className="
+            inline-flex items-center gap-1
+            px-2 py-0.5
+            bg-accent-cyan/10 border border-accent-cyan/30
+            text-xs text-accent-cyan mono-data
+          ">
+            {bot.metadata.provider}
+          </span>
+        )}
       </div>
 
       {/* Stats */}

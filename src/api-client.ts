@@ -46,6 +46,7 @@ export interface CreateBotData {
   is_permanent: boolean;
   ttl_seconds?: number;
   client_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 // Mock data for development without PostgREST

@@ -25,6 +25,7 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
     soul_name: bot.soul_name,
     client_id: bot.client_id,
     provider: (bot.metadata?.provider as string) || undefined,
+    model: (bot.metadata?.model as string) || undefined,
   });
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [loadingTools, setLoadingTools] = useState(false);
@@ -304,10 +305,19 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
 
             <div className="panel">
               <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
-                Bot ID
+                Provider
+              </div>
+              <div className="mono-data text-lg text-accent-cyan">
+                {bot.metadata?.provider ? String(bot.metadata.provider) : 'default'}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
+                Model
               </div>
               <div className="mono-data text-sm text-text-primary break-all">
-                {bot.id}
+                {bot.metadata?.model ? String(bot.metadata.model) : '—'}
               </div>
             </div>
 
@@ -346,6 +356,28 @@ export function BotDetail({ bot, onDestroy, onRestart }: BotDetailProps) {
                 {formatRelativeTime(bot.created_at)}
               </div>
             </div>
+
+            {bot.client_id && (
+              <div className="panel">
+                <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
+                  Client ID
+                </div>
+                <div className="mono-data text-sm text-text-primary">
+                  {bot.client_id}
+                </div>
+              </div>
+            )}
+
+            {typeof bot.metadata?.swarm === 'string' && (
+              <div className="panel">
+                <div className="text-xs text-text-muted uppercase tracking-wider mb-2">
+                  Swarm
+                </div>
+                <div className="mono-data text-sm text-text-primary">
+                  {bot.metadata.swarm} / {String(bot.metadata.role)}
+                </div>
+              </div>
+            )}
           </div>
         </TabsContent>
 

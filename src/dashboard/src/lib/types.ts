@@ -29,6 +29,8 @@ export interface CreateBotData {
   soul_name: string;
   is_permanent: boolean;
   ttl_seconds?: number;
+  provider?: string;
+  model?: string;
 }
 
 export interface SoulTemplate {
