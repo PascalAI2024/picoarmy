@@ -79,7 +79,7 @@ export function getProviderPresets(): ProviderPreset[] {
       apiBase: process.env.GLM_CODING_API_BASE || process.env.GLM_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
       model: 'glm-4.7-flash',
       format: 'openai',
-      description: 'Zhipu GLM-4.7-Flash (FREE, unlimited)',
+      description: 'Zhipu GLM-4.7-Flash (coding plan, fast reasoning)',
     },
   ];
   return presets.filter(p => p.apiKey); // Only return presets with configured keys

@@ -653,7 +653,7 @@ app.post('/api/fleet/:id/chat', async (req: Request, res: Response) => {
       body: JSON.stringify({
         model: (bot.metadata?.model as string) || preset.model,
         messages,
-        max_tokens: 1024,
+        max_tokens: 2048,
       }),
     });
 
@@ -667,9 +667,11 @@ app.post('/api/fleet/:id/chat', async (req: Request, res: Response) => {
     }
 
     const data = await llmResponse.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
     };
-    const reply = data.choices?.[0]?.message?.content || '(no response)';
+    const msg = data.choices?.[0]?.message;
+    // GLM reasoning models put output in reasoning_content, content may be empty
+    const reply = msg?.content || msg?.reasoning_content || '(no response)';
 
     res.json({
       reply,
