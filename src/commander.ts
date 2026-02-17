@@ -653,7 +653,7 @@ app.post('/api/fleet/:id/chat', async (req: Request, res: Response) => {
       body: JSON.stringify({
         model: (bot.metadata?.model as string) || preset.model,
         messages,
-        max_tokens: 2048,
+        max_completion_tokens: 32768,
       }),
     });
 
