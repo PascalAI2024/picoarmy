@@ -66,14 +66,6 @@ export function getProviderPresets(): ProviderPreset[] {
       description: 'MiniMax via Anthropic-compatible /anthropic (same key)',
     },
     {
-      name: 'glm',
-      apiKey: process.env.GLM_API_KEY || '',
-      apiBase: process.env.GLM_API_BASE || 'https://api.z.ai/api/paas/v4',
-      model: 'glm-4.7',
-      format: 'openai',
-      description: 'Zhipu GLM-4.7 (regular API key)',
-    },
-    {
       name: 'glm-coding',
       apiKey: process.env.GLM_CODING_API_KEY || '',
       apiBase: process.env.GLM_CODING_API_BASE || 'https://api.z.ai/api/coding/paas/v4',
