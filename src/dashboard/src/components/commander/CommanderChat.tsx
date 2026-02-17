@@ -8,11 +8,42 @@ interface CommanderChatProps {
   onClose: () => void;
 }
 
+interface SwarmPipelineBot {
+  role: string;
+  completion_tokens: number;
+}
+
+function SwarmPipeline({ pipeline }: { pipeline: SwarmPipelineBot[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2 py-1.5 px-2 bg-accent-cyan/5 border border-accent-cyan/20 rounded-sm">
+      {pipeline.map((bot, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
+            <Bot className="h-3 w-3 text-accent-cyan" />
+            <span className="text-[10px] text-text-secondary mono-data">{bot.role}</span>
+            <span className="text-[9px] text-text-muted mono-data">({bot.completion_tokens}t)</span>
+          </div>
+          {i < pipeline.length - 1 && (
+            <span className="text-accent-cyan/40">→</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ToolCallItem({ tc }: { tc: CommanderToolCall }) {
   const [expanded, setExpanded] = useState(false);
 
   let parsedResult: unknown;
   try { parsedResult = JSON.parse(tc.result); } catch { parsedResult = tc.result; }
+
+  // Check if this is a swarm_task result with pipeline
+  const isSwarmTask = tc.tool === 'swarm_task';
+  const swarmPipeline: SwarmPipelineBot[] | null =
+    isSwarmTask && typeof parsedResult === 'object' && parsedResult !== null && 'pipeline' in parsedResult
+      ? (parsedResult as { pipeline?: SwarmPipelineBot[] }).pipeline || null
+      : null;
 
   return (
     <div className="border border-border/50 rounded-sm text-xs">
@@ -26,6 +57,11 @@ function ToolCallItem({ tc }: { tc: CommanderToolCall }) {
       </button>
       {expanded && (
         <div className="px-2 py-1.5 border-t border-border/30 bg-bg/50">
+          {/* Show pipeline visualization for swarm_task */}
+          {swarmPipeline && swarmPipeline.length > 0 && (
+            <SwarmPipeline pipeline={swarmPipeline} />
+          )}
+
           {tc.args && Object.keys(tc.args).length > 0 && (
             <div className="mb-1">
               <span className="text-text-muted">args:</span>

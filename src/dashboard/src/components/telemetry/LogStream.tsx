@@ -22,7 +22,8 @@ export function LogStream({ maxLines = 500, height = '400px' }: LogStreamProps) 
     ? logs.filter(
         (log) =>
           log.message.toLowerCase().includes(filter.toLowerCase()) ||
-          log.bot_id.toLowerCase().includes(filter.toLowerCase())
+          log.bot_id?.toLowerCase().includes(filter.toLowerCase()) ||
+          log.bot_name?.toLowerCase().includes(filter.toLowerCase())
       )
     : logs;
 
@@ -140,7 +141,7 @@ export function LogStream({ maxLines = 500, height = '400px' }: LogStreamProps) 
               <span className="text-gray-600 flex-shrink-0">
                 {formatTime(log.timestamp)}
               </span>
-              <span className="text-cyan-400 flex-shrink-0">[{log.bot_id}]</span>
+              <span className="text-cyan-400 flex-shrink-0">[{log.bot_name || log.bot_id || 'unknown'}]</span>
               <span className={getLevelColor(log.level)}>{log.message}</span>
             </div>
           ))

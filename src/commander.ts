@@ -1103,21 +1103,6 @@ const commanderTools = [
   {
     type: 'function' as const,
     function: {
-      name: 'bot_task',
-      description: 'Send a task to a bot and get the result. Calls the bot\'s LLM with its soul personality and returns the response. Use this to assign work to bots and collect results.',
-      parameters: {
-        type: 'object',
-        properties: {
-          bot_name: { type: 'string', description: 'Name of the bot to send the task to' },
-          task: { type: 'string', description: 'The task or question for the bot to work on' },
-        },
-        required: ['bot_name', 'task'],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'web_search',
       description: 'Search the web for current information. Returns titles, snippets, URLs, and dates. Use for news, research, current events, or any query requiring up-to-date information.',
       parameters: {
@@ -1571,98 +1556,6 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
       return JSON.stringify({ prefix, destroyed, count: destroyed.length });
     }
-    case 'bot_task': {
-      const botName = args.bot_name as string;
-      const task = args.task as string;
-
-      // Find bot in DB
-      const dbBots = await apiClient.getBots();
-      const bot = dbBots.find(b => b.name === botName);
-      if (!bot) return JSON.stringify({ error: `Bot "${botName}" not found` });
-
-      // Resolve bot's provider
-      const botProvider = bot.metadata?.provider as string | undefined;
-      const botPreset = botProvider ? resolveProvider(botProvider) : null;
-      const apiBase = botPreset?.apiBase || process.env.OPENAI_API_BASE || '';
-      const apiKey = botPreset?.apiKey || process.env.OPENAI_API_KEY || '';
-      const model = (bot.metadata?.model as string) || botPreset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
-
-      if (!apiBase || !apiKey) {
-        return JSON.stringify({ error: `Bot "${botName}" has no LLM provider configured` });
-      }
-
-      // Load bot's soul as system prompt
-      let soulContent = 'You are a helpful assistant.';
-      const soulPath = path.join(process.cwd(), 'souls', `${bot.soul_name}.md`);
-      if (fs.existsSync(soulPath)) {
-        soulContent = fs.readFileSync(soulPath, 'utf-8');
-      }
-      // Also check bot's workspace soul
-      const workspaceSoul = path.join('/data/bots', botName, 'workspace', 'SOUL.md');
-      if (fs.existsSync(workspaceSoul)) {
-        soulContent = fs.readFileSync(workspaceSoul, 'utf-8');
-      }
-
-      console.log(`[bot_task] Sending task to "${botName}" via ${botProvider || 'default'} (${model})`);
-
-      // Broadcast task start to dashboard
-      broadcastSSE('log:entry', {
-        id: `log-${Date.now()}`,
-        bot_name: botName,
-        level: 'info',
-        message: `📤 Task received (${task.slice(0, 80)}...)`,
-        timestamp: new Date().toISOString(),
-      });
-
-      const taskResponse = await fetch(`${apiBase}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: soulContent },
-            { role: 'user', content: task },
-          ],
-          max_completion_tokens: 4096,
-        }),
-      });
-
-      if (!taskResponse.ok) {
-        const errText = await taskResponse.text();
-        console.error(`[bot_task] LLM error for "${botName}":`, errText.slice(0, 200));
-        return JSON.stringify({ error: `Bot "${botName}" LLM error: ${errText.slice(0, 150)}`, bot: botName, provider: botProvider });
-      }
-
-      const taskData = await taskResponse.json() as {
-        choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-        usage?: { total_tokens?: number };
-      };
-      const taskMsg = taskData.choices?.[0]?.message;
-      const result = taskMsg?.content || taskMsg?.reasoning_content || '(no response)';
-      const tokens = taskData.usage?.total_tokens || 0;
-
-      console.log(`[bot_task] "${botName}" responded (${tokens} tokens)`);
-
-      // Broadcast task result to dashboard
-      broadcastSSE('log:entry', {
-        id: `log-${Date.now()}`,
-        bot_name: botName,
-        level: 'info',
-        message: `📥 Response (${tokens} tokens): ${result.slice(0, 120)}...`,
-        timestamp: new Date().toISOString(),
-      });
-
-      return JSON.stringify({
-        bot: botName,
-        provider: botProvider || 'default',
-        model,
-        result,
-        tokens,
-      });
-    }
     case 'web_search': {
       const query = args.query as string;
       if (!query) return JSON.stringify({ error: 'query is required' });
@@ -2088,7 +1981,7 @@ That's it. Two tool calls. web_search → swarm_task → reply.`;
     conversationHistory.push({ role: 'user', content: message });
     const messages = conversationHistory;
 
-    // Tool execution loop (max 10 iterations — teams need: deploy + N bot_tasks + web_search)
+    // Tool execution loop (max 10 iterations — swarm_task handles full pipeline internally)
     const toolCallsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
 
     for (let i = 0; i < 10; i++) {
@@ -2098,7 +1991,7 @@ That's it. Two tool calls. web_search → swarm_task → reply.`;
         max_completion_tokens: 4096,
       };
 
-      // Always provide tools so the LLM can chain bot_task calls across iterations
+      // Always provide tools so the LLM can call swarm_task
       llmBody.tools = commanderTools;
       llmBody.tool_choice = 'auto';
 

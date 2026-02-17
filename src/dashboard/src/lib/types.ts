@@ -17,7 +17,8 @@ export interface Bot {
 
 export interface LogEntry {
   id: string;
-  bot_id: string;
+  bot_id?: string;
+  bot_name?: string;
   level: 'info' | 'warn' | 'error' | 'debug';
   message: string;
   metadata: Record<string, unknown>;
