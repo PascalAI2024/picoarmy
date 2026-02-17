@@ -1188,43 +1188,29 @@ const commanderTools = [
   {
     type: 'function' as const,
     function: {
-      name: 'deploy_team',
-      description: 'Deploy a custom team of bots for any task. AI-generates a unique soul for each role using proven prompting techniques, picks optimal providers, spawns all bots. Use instead of swarm_deploy when you need a custom team composition.',
+      name: 'swarm_task',
+      description: 'Run a swarm pipeline: generates AI souls for each role, then chains LLM calls sequentially (each bot gets previous bot\'s output). Returns the final polished result. No processes spawned — pure LLM orchestration. This is your PRIMARY tool for any substantive task.',
       parameters: {
         type: 'object',
         properties: {
-          task: { type: 'string', description: 'What the team needs to accomplish (used as context in each soul)' },
-          team_name: { type: 'string', description: 'Name prefix for all bots (e.g. "pricing-team", "content-team")' },
+          task: { type: 'string', description: 'What the swarm needs to accomplish' },
+          context: { type: 'string', description: 'Context data to feed the first bot (e.g. web_search results). ALWAYS include this when you have search results.' },
           bots: {
             type: 'array',
-            description: 'Bot definitions for the team. Each bot gets an AI-generated soul.',
+            description: 'Ordered pipeline of bots. Each bot receives the previous bot\'s output. First bot also gets context.',
             items: {
               type: 'object',
               properties: {
-                role: { type: 'string', description: 'Role name (e.g. "researcher", "writer", "analyst", "reviewer")' },
-                description: { type: 'string', description: 'What this bot does in the team (used to generate its soul)' },
-                provider: { type: 'string', description: 'LLM provider preset (e.g. groq-scout, groq-kimi). Spread across models to avoid rate limits.' },
-                style: { type: 'string', description: 'Communication style for this bot (e.g. "technical", "creative", "formal")' },
+                role: { type: 'string', description: 'Role name (researcher, analyst, writer, etc.)' },
+                task: { type: 'string', description: 'Specific instructions for this bot. Be detailed — what to produce, what format, what to focus on.' },
+                provider: { type: 'string', description: 'LLM provider (groq-scout, groq-kimi, groq-maverick). Spread across models.' },
+                style: { type: 'string', description: 'Communication style (technical, creative, formal, casual)' },
               },
-              required: ['role', 'description'],
+              required: ['role', 'task'],
             },
           },
         },
-        required: ['task', 'team_name', 'bots'],
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'destroy_team',
-      description: 'Destroy all bots belonging to a team by team name prefix. Use this AFTER presenting team results to the user to clean up ephemeral bots.',
-      parameters: {
-        type: 'object',
-        properties: {
-          team_name: { type: 'string', description: 'The team name prefix (e.g. "news-team"). All bots whose name starts with this prefix will be destroyed.' },
-        },
-        required: ['team_name'],
+        required: ['task', 'bots'],
       },
     },
   },
@@ -1828,149 +1814,118 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
 
       return JSON.stringify({ success: true, name: soulName, path: soulPath, preview: content.slice(0, 300) });
     }
-    case 'deploy_team': {
+    case 'swarm_task': {
       const task = args.task as string;
-      const teamName = args.team_name as string;
-      const botDefs = args.bots as Array<{ role: string; description: string; provider?: string; style?: string }>;
+      const context = (args.context as string) || '';
+      const botDefs = args.bots as Array<{ role: string; task: string; provider?: string; style?: string }>;
 
-      if (!task || !teamName || !botDefs || botDefs.length === 0) {
-        return JSON.stringify({ error: 'task, team_name, and bots[] are required' });
-      }
-      if (!/^[a-zA-Z0-9-]+$/.test(teamName)) {
-        return JSON.stringify({ error: 'team_name must be alphanumeric with hyphens only' });
+      if (!task || !botDefs || botDefs.length === 0) {
+        return JSON.stringify({ error: 'task and bots[] are required' });
       }
 
-      const soulsDir = path.join(process.cwd(), 'souls');
-      if (!fs.existsSync(soulsDir)) fs.mkdirSync(soulsDir, { recursive: true });
+      console.log(`[swarm] Starting pipeline (${botDefs.length} bots) for: ${task.slice(0, 100)}`);
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`, bot_name: 'swarm', level: 'info',
+        message: `🐝 Swarm started: ${botDefs.map(b => b.role).join(' → ')}`,
+        timestamp: new Date().toISOString(),
+      });
 
-      const deployed: Array<{ name: string; role: string; provider: string; model: string; soul_preview: string }> = [];
-      const createdBotIds: string[] = [];
+      const pipeline: Array<{ role: string; provider: string; model: string; tokens: number; output_preview: string }> = [];
+      let previousOutput = '';
 
-      console.log(`[deploy_team] Deploying team "${teamName}" (${botDefs.length} bots) for: ${task.slice(0, 100)}`);
-
-      for (const botDef of botDefs) {
-        const botName = `${teamName}-${botDef.role}`;
-        const soulName = botName;
+      for (let idx = 0; idx < botDefs.length; idx++) {
+        const botDef = botDefs[idx];
         const providerName = botDef.provider || 'groq-scout';
         const preset = resolveProvider(providerName);
+        const apiBase = preset?.apiBase || process.env.OPENAI_API_BASE || '';
+        const apiKey = preset?.apiKey || process.env.OPENAI_API_KEY || '';
         const model = preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
 
-        try {
-          // 1. Generate AI soul with team context
-          const soulDesc = `${botDef.description}. You are part of the "${teamName}" team working on: ${task}`;
-          const soulContent = await generateSoulContent(soulDesc, botDef.role, botDef.style);
-          const soulPath = path.join(soulsDir, `${soulName}.md`);
-          fs.writeFileSync(soulPath, soulContent, 'utf-8');
-          console.log(`[deploy_team] Generated soul "${soulName}"`);
-
-          // 2. Create DB record
-          const dbBot = await apiClient.createBot({
-            name: botName,
-            soul_name: soulName,
-            is_permanent: false,
-            metadata: {
-              provider: providerName,
-              model,
-              team: teamName,
-              role: botDef.role,
-            },
-          });
-          createdBotIds.push(dbBot.id);
-
-          // 3. Spawn process
-          const config: BotConfig = {
-            name: botName,
-            soulName,
-            isPermanent: false,
-            ttlSeconds: null,
-            openaiApiKey: preset?.apiKey || process.env.OPENAI_API_KEY || '',
-            openaiApiBase: preset?.apiBase || process.env.OPENAI_API_BASE || '',
-            model,
-            telegramBotToken: '',
-            telegramAllowFrom: '',
-            workspaceDir: '',
-            providerPreset: providerName,
-          };
-
-          try {
-            await processManager.spawnBot(config);
-          } catch (spawnErr) {
-            console.warn(`[deploy_team] Spawn failed for "${botName}":`, spawnErr instanceof Error ? spawnErr.message : String(spawnErr));
-          }
-
-          broadcastSSE('fleet:spawn', dbBot);
-          deployed.push({
-            name: botName,
-            role: botDef.role,
-            provider: providerName,
-            model,
-            soul_preview: soulContent.split('\n').slice(0, 3).join(' ').slice(0, 200),
-          });
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          console.error(`[deploy_team] Failed to deploy "${botName}":`, errMsg);
-
-          // Rollback: destroy all previously created bots
-          console.log(`[deploy_team] Rolling back ${createdBotIds.length} bot(s)...`);
-          for (const id of createdBotIds) {
-            try {
-              const botInfo = deployed.find(d => true); // any deployed bot
-              if (botInfo) processManager.destroyBot(botInfo.name);
-              await apiClient.deleteBot(id);
-            } catch { /* best effort cleanup */ }
-          }
-
-          return JSON.stringify({
-            error: `Team deployment failed at "${botName}": ${errMsg}`,
-            partial: deployed,
-          });
+        if (!apiBase || !apiKey) {
+          return JSON.stringify({ error: `Provider "${providerName}" not configured`, pipeline });
         }
-      }
 
-      console.log(`[deploy_team] Team "${teamName}" deployed: ${deployed.map(d => d.name).join(', ')}`);
-      broadcastSSE('log:entry', {
-        id: `log-${Date.now()}`,
-        bot_name: teamName,
-        level: 'info',
-        message: `🚀 Team deployed: ${deployed.map(d => d.name).join(', ')}`,
-        timestamp: new Date().toISOString(),
-      });
-      return JSON.stringify({
-        team: teamName,
-        task: task.slice(0, 200),
-        bots: deployed,
-      });
-    }
-    case 'destroy_team': {
-      const teamName = args.team_name as string;
-      if (!teamName) return JSON.stringify({ error: 'team_name is required' });
-
-      const dbBots = await apiClient.getBots();
-      const teamBots = dbBots.filter(b => b.name.startsWith(`${teamName}-`));
-
-      if (teamBots.length === 0) {
-        return JSON.stringify({ error: `No bots found with prefix "${teamName}-"` });
-      }
-
-      const destroyed: string[] = [];
-      for (const bot of teamBots) {
+        // Generate soul for this role
+        const soulDesc = `${botDef.task}. You are the ${botDef.role} in a swarm working on: ${task}`;
+        let soulContent: string;
         try {
-          processManager.destroyBot(bot.name);
-          await apiClient.deleteBot(bot.id);
-          destroyed.push(bot.name);
-        } catch { /* best effort */ }
+          soulContent = await generateSoulContent(soulDesc, botDef.role, botDef.style);
+        } catch {
+          soulContent = `You are a ${botDef.role}. ${botDef.task}`;
+        }
+
+        // Build the prompt: context (first bot) or previous output (subsequent bots)
+        let userPrompt = botDef.task;
+        if (idx === 0 && context) {
+          userPrompt = `Here is the context data:\n\n${context}\n\nYour task: ${botDef.task}`;
+        } else if (idx > 0 && previousOutput) {
+          userPrompt = `Here is the ${botDefs[idx - 1].role}'s output:\n\n${previousOutput}\n\nYour task: ${botDef.task}`;
+        }
+
+        console.log(`[swarm] ${botDef.role} (${providerName}/${model}) — processing...`);
+        broadcastSSE('log:entry', {
+          id: `log-${Date.now()}`, bot_name: `swarm:${botDef.role}`, level: 'info',
+          message: `📤 ${botDef.role} working...`,
+          timestamp: new Date().toISOString(),
+        });
+
+        const llmResp = await fetch(`${apiBase}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: soulContent },
+              { role: 'user', content: userPrompt },
+            ],
+            max_completion_tokens: 4096,
+          }),
+        });
+
+        if (!llmResp.ok) {
+          const errText = await llmResp.text();
+          console.error(`[swarm] ${botDef.role} LLM error:`, errText.slice(0, 200));
+          return JSON.stringify({ error: `${botDef.role} failed: ${errText.slice(0, 150)}`, pipeline });
+        }
+
+        const llmData = await llmResp.json() as {
+          choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+          usage?: { total_tokens?: number };
+        };
+        const output = llmData.choices?.[0]?.message?.content || llmData.choices?.[0]?.message?.reasoning_content || '(no response)';
+        const tokens = llmData.usage?.total_tokens || 0;
+
+        console.log(`[swarm] ${botDef.role} done (${tokens} tokens)`);
+        broadcastSSE('log:entry', {
+          id: `log-${Date.now()}`, bot_name: `swarm:${botDef.role}`, level: 'info',
+          message: `📥 ${botDef.role} done (${tokens} tok): ${output.slice(0, 80)}...`,
+          timestamp: new Date().toISOString(),
+        });
+
+        previousOutput = output;
+        pipeline.push({
+          role: botDef.role,
+          provider: providerName,
+          model,
+          tokens,
+          output_preview: output.slice(0, 200),
+        });
       }
 
-      console.log(`[destroy_team] Cleaned up team "${teamName}": ${destroyed.join(', ')}`);
+      const totalTokens = pipeline.reduce((sum, p) => sum + p.tokens, 0);
+      console.log(`[swarm] Pipeline complete (${pipeline.length} bots, ${totalTokens} total tokens)`);
       broadcastSSE('log:entry', {
-        id: `log-${Date.now()}`,
-        bot_name: teamName,
-        level: 'info',
-        message: `🧹 Team destroyed: ${destroyed.join(', ')}`,
+        id: `log-${Date.now()}`, bot_name: 'swarm', level: 'info',
+        message: `✅ Swarm complete: ${pipeline.map(p => p.role).join(' → ')} (${totalTokens} tokens)`,
         timestamp: new Date().toISOString(),
       });
 
-      return JSON.stringify({ team: teamName, destroyed, count: destroyed.length });
+      return JSON.stringify({
+        task: task.slice(0, 200),
+        result: previousOutput,
+        pipeline,
+        total_tokens: totalTokens,
+      });
     }
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
@@ -2020,33 +1975,29 @@ app.post('/api/commander/chat', async (req: Request, res: Response) => {
 
     const systemPrompt = `You are the PicoArmy Fleet Commander — an AI assistant that manages a fleet of picobot agents.
 
-## YOUR DEFAULT BEHAVIOR — ALWAYS USE THE FLEET
-You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS deploy a team to do the work.
+## YOUR DEFAULT BEHAVIOR — ALWAYS USE THE SWARM
+You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS run a swarm to do the work.
 
 When a user asks ANYTHING that isn't fleet management or small talk, you MUST:
 1. web_search first (if the task needs real-world info)
-2. deploy_team with 2-3 bots
-3. Chain bot_task calls sequentially (each bot gets previous bot's full output)
-4. Present the FINAL bot's output as your reply
-5. destroy_team to clean up
+2. swarm_task — pass web_search results as context, define 2-3 bots in pipeline order
+3. Present the swarm's final result as your reply
 
-ONLY answer directly (without bots) for these EXACT cases:
+swarm_task does EVERYTHING in one call: generates souls, chains LLM calls, returns the final output. No deploy, no bot_task, no cleanup needed.
+
+ONLY answer directly (without swarm) for:
 - "how many bots?" / "list bots" / "fleet status" → use fleet_list
 - "spawn X" / "destroy X" / "restart X" → fleet management tools
 - "hi" / "hello" / greetings → short greeting
 
-EVERYTHING ELSE = deploy_team → bot_task pipeline → destroy_team → reply.
-Even simple questions like "what's happening in AI?" MUST go through a team.
-You are the commander, not the worker. Your bots do the work. You orchestrate.
-
-IMPORTANT: Call destroy_team BEFORE writing your final text reply. Once you write text without a tool call, the conversation ends — so destroy_team must come first.
+EVERYTHING ELSE = web_search → swarm_task → present result.
+You are the commander, not the worker. The swarm does the work.
 
 ## CRITICAL RULES
 - NEVER make up information. NEVER fabricate data. Always use web_search for facts.
-- NEVER call swarm_deploy more than once per request. If it fails, tell the user.
-- NEVER skip result chaining — each bot_task MUST include the previous bot's full output.
-- ALWAYS destroy_team after presenting results.
-- Be concise. Present the final result, not the process.
+- ALWAYS pass web_search results into swarm_task's context parameter.
+- Present the swarm's result directly. Don't describe the pipeline process to the user.
+- Be concise and action-oriented.
 
 ## Current Fleet State
 ${bots.length === 0 ? 'No bots currently deployed.' : bots.map(b => `- **${b.name}** [${b.status}] soul=${b.soul_name} provider=${b.metadata?.provider || 'default'} uptime=${b.uptime_seconds || 0}s`).join('\n')}
@@ -2080,53 +2031,31 @@ RULES:
 - Use glm-coding or minimax for bots with complex/sustained tasks.
 - Spread swarm bots across different Groq models to avoid hitting one model's daily limit.
 
-## Dynamic Teams (PREFERRED)
-Use deploy_team to create custom bot teams for ANY task. YOU design the team composition:
-- Choose roles based on the task (researcher, writer, analyst, reviewer, scraper, etc.)
-- Pick providers: spread across Groq models to avoid rate limits
-- Set communication style per role (technical, creative, formal, casual)
-- Each bot gets an AI-generated soul automatically — no pre-made templates needed
+## Swarm Pipeline (YOUR PRIMARY TOOL)
+swarm_task runs a full bot pipeline in ONE call. No deploy, no cleanup, no chaining — it handles everything.
 
-deploy_team is the PREFERRED way to create teams. It generates unique, task-specific souls for each role.
+How it works:
+- You define 2-3 bots in pipeline order (researcher → analyst → writer)
+- Each bot gets an AI-generated soul
+- Results chain automatically: bot 1 output → bot 2 input → bot 3 input
+- Returns the final bot's output as "result"
 
 Example: User asks "analyze competitor pricing"
-→ deploy_team({
+→ swarm_task({
     task: "Analyze competitor pricing strategies",
-    team_name: "pricing-team",
+    context: "[paste web_search results here]",
     bots: [
-      { role: "scraper", description: "Extract pricing data from competitor sites", provider: "groq-scout" },
-      { role: "analyst", description: "Compare pricing strategies and find patterns", provider: "groq-kimi", style: "analytical" },
-      { role: "reporter", description: "Write executive summary with recommendations", provider: "groq-maverick", style: "professional" }
+      { role: "researcher", task: "Find key pricing data points and competitive positioning", provider: "groq-scout" },
+      { role: "analyst", task: "Identify pricing patterns, gaps, and strategic opportunities", provider: "groq-kimi" },
+      { role: "writer", task: "Write a concise executive briefing with actionable recommendations", provider: "groq-maverick" }
     ]
   })
 
-## ⚠️ MANDATORY Result Chaining (READ THIS)
-After deploying a team, you MUST execute a SEQUENTIAL PIPELINE — one bot at a time:
-
-Step 1: Call bot_task for the FIRST bot (researcher/scraper) with the user's task
-Step 2: Read the result. Extract the FULL output text.
-Step 3: Call bot_task for the SECOND bot (analyst). In the task prompt, PASTE the entire output from Step 2.
-Step 4: Read the result. Extract the FULL output text.
-Step 5: Call bot_task for the THIRD bot (writer). In the task prompt, PASTE the entire output from Step 4.
-...continue until all bots have been tasked.
-
-RULES:
-- NEVER call multiple bot_task in the same tool call — each one depends on the previous result
-- Each bot_task prompt MUST contain the LITERAL text output from the previous bot
-- Use this template: "Here is the [previous role]'s output:\n\n[PASTE FULL OUTPUT]\n\nYour task: [specific instructions]"
-- The final bot's output is what you present to the user
-
-Example:
-  → bot_task("team-researcher", "Research AI in healthcare trends for 2025")
-  → result: "AI is transforming healthcare through... [500 words]"
-  → bot_task("team-analyst", "Here is the researcher's findings:\n\nAI is transforming healthcare through... [500 words]\n\nYour task: Analyze the key patterns, identify the top 3 trends, and assess market impact.")
-  → result: "Analysis: The top 3 trends are... [800 words]"
-  → bot_task("team-writer", "Here is the analyst's analysis:\n\nAnalysis: The top 3 trends are... [800 words]\n\nYour task: Write a polished executive briefing for a non-technical audience.")
+IMPORTANT: Always pass web_search results as the "context" parameter. The first bot receives this context automatically.
 
 ## Swarm Templates (Pre-built)
-For common team types, use swarm_deploy with pre-built templates. Use swarm_list to see available templates.
-Only use swarm_deploy when a pre-built template matches the task (e.g., seo-team, research-team, support-team).
-For anything else, use deploy_team.
+swarm_deploy uses pre-built JSON templates for common team types. Use swarm_list to see available templates.
+Only use swarm_deploy for standard templates. For everything else, use swarm_task.
 
 ## Web Search
 You have a built-in web_search tool for real-time information. Use it for news, research, current events.
@@ -2139,14 +2068,11 @@ Use mcp_list to see available tools. These include:
 ## Pipeline Flow (THIS IS YOUR MAIN LOOP)
 For ANY substantive user request:
 
-1. web_search({query: "..."}) — get real data. Save this output.
-2. deploy_team({task, team_name, bots: [...]}) — 2-3 bots max
-3. bot_task(bot1, "Here are search results:\n[PASTE THE FULL web_search OUTPUT HERE]\n\nYour task: [specific instructions]")
-   ⚠️ The first bot_task MUST include the web_search results. Do NOT just say "find X" — PASTE the data.
-4. bot_task(bot2, "Here is the previous output:\n[PASTE bot1's FULL result]\n\nYour task: [analyze/process]")
-5. bot_task(bot3, "Here is the previous output:\n[PASTE bot2's FULL result]\n\nYour task: [final polish]")
-6. YOUR REPLY = the final bot's output. Present it directly. Don't describe the process.
-7. destroy_team({team_name}) — ALWAYS clean up. Call this LAST, after your reply text.`;
+1. web_search({query: "..."}) — get real data
+2. swarm_task({task, context: "[web_search results]", bots: [...]}) — one call does everything
+3. YOUR REPLY = the swarm's "result" field. Present it directly. Don't describe the process.
+
+That's it. Two tool calls. web_search → swarm_task → reply.`;
 
     // Build messages
     conversationHistory = [
@@ -2253,33 +2179,10 @@ For ANY substantive user request:
 
       // No tool calls — we have our final response
       const reply = assistantMsg.content || '(no response)';
-
-      // Auto-cleanup: destroy any teams deployed during this chat
-      for (const tc of toolCallsLog) {
-        if (tc.tool === 'deploy_team') {
-          try {
-            const teamName = tc.args.team_name as string;
-            if (teamName) {
-              const cleanupResult = await executeCommanderTool('destroy_team', { team_name: teamName });
-              toolCallsLog.push({ tool: 'destroy_team', args: { team_name: teamName }, result: cleanupResult });
-              console.log(`[CMD Chat] Auto-cleanup: destroyed team "${teamName}"`);
-            }
-          } catch { /* best effort */ }
-        }
-      }
-
       return res.json({ reply, toolCalls: toolCallsLog, model: modelName, provider: providerName });
     }
 
-    // Safety: if we hit max iterations — still clean up teams
-    for (const tc of toolCallsLog) {
-      if (tc.tool === 'deploy_team') {
-        try {
-          const teamName = tc.args.team_name as string;
-          if (teamName) await executeCommanderTool('destroy_team', { team_name: teamName });
-        } catch { /* best effort */ }
-      }
-    }
+    // Safety: if we hit max iterations
     return res.json({ reply: 'Completed tool execution cycle.', toolCalls: toolCallsLog, model: modelName, provider: providerName });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
