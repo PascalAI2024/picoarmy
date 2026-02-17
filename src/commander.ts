@@ -1103,6 +1103,21 @@ const commanderTools = [
   {
     type: 'function' as const,
     function: {
+      name: 'bot_task',
+      description: 'Send a task to a bot and get the result. Calls the bot\'s LLM with its soul personality and returns the response. Use this to assign work to bots and collect results.',
+      parameters: {
+        type: 'object',
+        properties: {
+          bot_name: { type: 'string', description: 'Name of the bot to send the task to' },
+          task: { type: 'string', description: 'The task or question for the bot to work on' },
+        },
+        required: ['bot_name', 'task'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'soul_create',
       description: 'AI-generate a professional soul template and save it to souls/ directory',
       parameters: {
@@ -1467,6 +1482,80 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
       return JSON.stringify({ prefix, destroyed, count: destroyed.length });
     }
+    case 'bot_task': {
+      const botName = args.bot_name as string;
+      const task = args.task as string;
+
+      // Find bot in DB
+      const dbBots = await apiClient.getBots();
+      const bot = dbBots.find(b => b.name === botName);
+      if (!bot) return JSON.stringify({ error: `Bot "${botName}" not found` });
+
+      // Resolve bot's provider
+      const botProvider = bot.metadata?.provider as string | undefined;
+      const botPreset = botProvider ? resolveProvider(botProvider) : null;
+      const apiBase = botPreset?.apiBase || process.env.OPENAI_API_BASE || '';
+      const apiKey = botPreset?.apiKey || process.env.OPENAI_API_KEY || '';
+      const model = (bot.metadata?.model as string) || botPreset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
+
+      if (!apiBase || !apiKey) {
+        return JSON.stringify({ error: `Bot "${botName}" has no LLM provider configured` });
+      }
+
+      // Load bot's soul as system prompt
+      let soulContent = 'You are a helpful assistant.';
+      const soulPath = path.join(process.cwd(), 'souls', `${bot.soul_name}.md`);
+      if (fs.existsSync(soulPath)) {
+        soulContent = fs.readFileSync(soulPath, 'utf-8');
+      }
+      // Also check bot's workspace soul
+      const workspaceSoul = path.join('/data/bots', botName, 'workspace', 'SOUL.md');
+      if (fs.existsSync(workspaceSoul)) {
+        soulContent = fs.readFileSync(workspaceSoul, 'utf-8');
+      }
+
+      console.log(`[bot_task] Sending task to "${botName}" via ${botProvider || 'default'} (${model})`);
+
+      const taskResponse = await fetch(`${apiBase}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: soulContent },
+            { role: 'user', content: task },
+          ],
+          max_completion_tokens: 4096,
+        }),
+      });
+
+      if (!taskResponse.ok) {
+        const errText = await taskResponse.text();
+        console.error(`[bot_task] LLM error for "${botName}":`, errText.slice(0, 200));
+        return JSON.stringify({ error: `Bot "${botName}" LLM error: ${errText.slice(0, 150)}`, bot: botName, provider: botProvider });
+      }
+
+      const taskData = await taskResponse.json() as {
+        choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+        usage?: { total_tokens?: number };
+      };
+      const taskMsg = taskData.choices?.[0]?.message;
+      const result = taskMsg?.content || taskMsg?.reasoning_content || '(no response)';
+      const tokens = taskData.usage?.total_tokens || 0;
+
+      console.log(`[bot_task] "${botName}" responded (${tokens} tokens)`);
+
+      return JSON.stringify({
+        bot: botName,
+        provider: botProvider || 'default',
+        model,
+        result,
+        tokens,
+      });
+    }
     case 'soul_preview': {
       const desc = args.description as string;
       const roleStr = args.role as string;
@@ -1590,15 +1679,30 @@ You can deploy coordinated bot groups using swarms. Use swarm_list to see templa
 When the user asks for a "team" or "swarm" or multiple bots for a task, prefer swarm_deploy over spawning bots individually.
 You can also create ad-hoc multi-bot setups by spawning multiple bots with a shared name prefix.
 
+## Orchestrating Bot Work
+You can send tasks directly to bots and get results using bot_task. This is how you make bots DO work:
+
+1. Deploy a swarm or spawn bots
+2. Use bot_task to send each bot their assignment
+3. Collect results from each bot
+4. Synthesize and present the combined output to the user
+
+Example workflow:
+- User: "Deploy the research team and research AI in healthcare"
+- You: swarm_deploy(research-team) → bot_task(research-team-analyst, "Research current state of AI in healthcare...") → bot_task(research-team-summarizer, "Summarize these findings: [analyst output]") → present final report
+
+IMPORTANT: When you deploy a swarm for a task, ALWAYS follow up with bot_task calls to give each bot their assignment. Don't just deploy and stop — the user wants RESULTS.
+
 ## Your Role
-You help the user manage their bot fleet through natural conversation. You can:
+You help the user manage their bot fleet AND orchestrate their work. You can:
 - List, spawn, destroy, and restart bots
 - Deploy soul templates and skills to bots
 - Deploy and manage swarm teams
+- **Send tasks to bots and collect results (bot_task)**
 - Check fleet status and provider configuration
 - Give strategic advice on fleet composition and provider selection
 
-Be concise and action-oriented. When the user asks to do something, use your tools to do it — don't just describe what you would do.`;
+Be concise and action-oriented. When the user asks to do something, use your tools to do it — don't just describe what you would do. When deploying bots for a task, always follow through with bot_task to get actual results.`;
 
     // Build messages
     conversationHistory = [
