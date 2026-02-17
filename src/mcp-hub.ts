@@ -3,13 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
 export interface MCPServerConfig {
-  command: string;
-  args: string[];
+  // Stdio transport (spawn a process)
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
+  // HTTP transport (connect to remote URL)
+  type?: 'stdio' | 'http';
+  url?: string;
+  headers?: Record<string, string>;
+  // Common
   scope: string; // 'shared' or 'client:<id>'
   description: string;
 }
@@ -29,7 +36,7 @@ export interface MCPToolInfo {
 
 interface MCPConnection {
   client: Client;
-  transport: StdioClientTransport;
+  transport: StdioClientTransport | StreamableHTTPClientTransport;
   config: MCPServerConfig;
   tools: MCPToolInfo[];
   status: 'connecting' | 'connected' | 'error' | 'disconnected';
@@ -96,7 +103,9 @@ export class MCPHub extends EventEmitter {
   }
 
   async connectServer(name: string, config: MCPServerConfig): Promise<void> {
-    console.log(`[MCP] Connecting to "${name}" (${config.command} ${config.args.join(' ')})`);
+    const isHttp = config.type === 'http' || !!config.url;
+    const displayInfo = isHttp ? config.url : `${config.command} ${(config.args || []).join(' ')}`;
+    console.log(`[MCP] Connecting to "${name}" (${isHttp ? 'HTTP' : 'stdio'}: ${displayInfo})`);
 
     const conn: MCPConnection = {
       client: new Client({ name: 'picoarmy-commander', version: '1.0.0' }),
@@ -109,19 +118,52 @@ export class MCPHub extends EventEmitter {
     this.connections.set(name, conn);
 
     try {
-      // Interpolate env vars: ${VAR_NAME} → process.env.VAR_NAME
-      const env: Record<string, string> = {};
-      if (config.env) {
-        for (const [key, value] of Object.entries(config.env)) {
-          env[key] = value.replace(/\$\{(\w+)\}/g, (_, varName) => process.env[varName] || '');
-        }
-      }
+      // Interpolate env vars in all string values: ${VAR_NAME} → process.env.VAR_NAME
+      const interpolate = (val: string) =>
+        val.replace(/\$\{(\w+)\}/g, (_, varName) => process.env[varName] || '');
 
-      conn.transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: { ...process.env as Record<string, string>, ...env },
-      });
+      if (isHttp && config.url) {
+        // HTTP transport
+        const headers: Record<string, string> = {
+          // Z.AI Streamable HTTP MCP requires both Accept types
+          'Accept': 'application/json, text/event-stream',
+        };
+        if (config.headers) {
+          for (const [key, value] of Object.entries(config.headers)) {
+            headers[key] = interpolate(value);
+          }
+        }
+
+        // Skip servers with missing API keys (interpolated to empty string)
+        const authHeader = headers['Authorization'];
+        if (authHeader && authHeader.endsWith('Bearer ')) {
+          console.log(`[MCP] Skipping "${name}" — API key not configured`);
+          conn.status = 'disconnected';
+          conn.error = 'API key not configured';
+          return;
+        }
+
+        conn.transport = new StreamableHTTPClientTransport(
+          new URL(config.url),
+          { requestInit: { headers } }
+        );
+      } else if (config.command) {
+        // Stdio transport
+        const env: Record<string, string> = {};
+        if (config.env) {
+          for (const [key, value] of Object.entries(config.env)) {
+            env[key] = interpolate(value);
+          }
+        }
+
+        conn.transport = new StdioClientTransport({
+          command: config.command,
+          args: config.args || [],
+          env: { ...process.env as Record<string, string>, ...env },
+        });
+      } else {
+        throw new Error(`Server "${name}" has no command or url configured`);
+      }
 
       await conn.client.connect(conn.transport);
       conn.status = 'connected';

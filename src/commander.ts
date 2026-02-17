@@ -1118,8 +1118,45 @@ const commanderTools = [
   {
     type: 'function' as const,
     function: {
+      name: 'web_search',
+      description: 'Search the web for current information. Returns titles, snippets, URLs, and dates. Use for news, research, current events, or any query requiring up-to-date information.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query (be specific for best results)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'mcp_call',
+      description: 'Call an MCP tool connected to the fleet hub (vision analysis, image/video generation, TTS). Use mcp_list to see available tools.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tool_name: { type: 'string', description: 'MCP tool name (e.g. analyze_image, ui_to_artifact)' },
+          arguments: { type: 'object', description: 'Arguments for the tool call (varies per tool)' },
+        },
+        required: ['tool_name', 'arguments'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'mcp_list',
+      description: 'List all connected MCP tools with their descriptions and input schemas',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'soul_create',
-      description: 'AI-generate a professional soul template and save it to souls/ directory',
+      description: 'AI-generate a soul using proven prompting techniques (role anchoring, behavioral constraints, few-shot tone calibration, chain-of-thought directives, tool-aware instructions, memory protocol, anti-patterns). Saves to souls/ directory.',
       parameters: {
         type: 'object',
         properties: {
@@ -1136,7 +1173,7 @@ const commanderTools = [
     type: 'function' as const,
     function: {
       name: 'soul_preview',
-      description: 'AI-generate a soul template preview without saving (for user review)',
+      description: 'Preview an AI-generated soul (same techniques as soul_create) without saving. Returns full SOUL.md content for user review.',
       parameters: {
         type: 'object',
         properties: {
@@ -1160,53 +1197,73 @@ async function generateSoulContent(description: string, role: string, style?: st
     throw new Error(`Soul generation failed: Commander provider "${providerName}" not configured`);
   }
 
-  const styleHint = style ? `Communication style: ${style}` : '';
+  // ── Expert system prompt with proven prompting techniques ──
+  const systemPrompt = `You are an AI Prompt Architect specializing in agent personality design.
 
-  const prompt = `You are an expert at crafting AI agent personalities. Generate a professional SOUL.md template for a picobot agent.
+You use these proven techniques to craft high-quality agent personalities:
 
-**Requirements:**
-- Role: ${role}
-- Purpose: ${description}
-${styleHint ? `- ${styleHint}` : ''}
+1. **Role Anchoring** — Define WHO the agent is with a vivid identity, not just what it does.
+   Use first-person framing: "You are..." followed by a specific archetype, not a generic label.
 
-**Output Format (Markdown):**
+2. **Behavioral Constraints** — Include explicit "NEVER" and "ALWAYS" rules.
+   Constraints prevent hallucination, scope creep, and off-brand behavior.
 
-# {Role Title}
+3. **Few-Shot Tone Calibration** — Include 2-3 example responses showing the desired voice.
+   This grounds the personality far better than adjective lists.
 
-{1-2 sentence overview of what this bot does}
+4. **Chain-of-Thought Directives** — Tell the agent HOW to think, not just what to say.
+   "Before answering, consider: ..." or "Think step-by-step about..."
 
-## Personality
+5. **Tool-Aware Instructions** — If the agent has tools, describe WHEN and WHY to use each.
+   "Use web_search when the user asks about current events, not from memory."
 
-- {trait 1}
-- {trait 2}
-- {trait 3}
-- {trait 4}
+6. **Memory & Context Protocol** — Tell the agent what to remember, what to forget.
+   "Save key user preferences to memory. Never store passwords or sensitive data."
 
-## Core Skills
+7. **Escalation Rules** — Define when the agent should say "I can't" vs attempt a task.
+   Clear boundaries prevent both overconfidence and excessive hedging.
 
-- {skill 1}
-- {skill 2}
-- {skill 3}
-- {skill 4}
-- {skill 5}
+8. **Anti-Patterns** — List specific BAD behaviors to avoid.
+   "Don't start every response with 'Great question!' or use filler phrases."
 
-## Guidelines
+OUTPUT FORMAT: Markdown document. No code fences, no preamble. Start with # heading.
 
-- {guideline 1 — specific, actionable rule}
-- {guideline 2}
-- {guideline 3}
-- {guideline 4}
-- {guideline 5}
-- {guideline 6}
+SECTIONS (all required):
+# {Title} — Vivid role name, not generic
+{2-3 sentence identity anchoring paragraph. First person "You are..." with archetype.}
 
-**Quality Standards:**
-- Personality traits should be specific and differentiated (not generic "helpful, friendly")
-- Core Skills must be concrete and relevant to the role
-- Guidelines should be actionable rules, not vague advice
-- Include anti-patterns or "never do X" rules where relevant
-- Use professional tone unless style specifies otherwise
+## Voice & Personality
+{3-5 specific personality traits. Each one sentence with an example behavior.}
 
-Generate ONLY the markdown content (no preamble, no code fences). Start with the # heading.`;
+## Example Responses
+{2-3 short example exchanges showing the agent's voice. Format: User: ... / You: ...}
+
+## Core Capabilities
+{4-6 concrete skills. Each starts with an action verb.}
+
+## Decision Framework
+{How the agent should think. Step-by-step reasoning rules for common scenarios.}
+
+## Tool Usage
+{When to use available tools. If no tools specified, say "Use available tools proactively."}
+
+## Memory Protocol
+{What to remember across conversations. What NOT to store.}
+
+## Boundaries & Escalation
+{Clear "I can" vs "I can't" rules. When to escalate. What to refuse.}
+
+## Anti-Patterns (NEVER DO)
+{4-6 specific bad behaviors to avoid. Each starts with "Never..."}`;
+
+  const styleHint = style ? `\n- Communication style: ${style}` : '';
+
+  const userPrompt = `Create a SOUL.md for this picobot agent:
+
+- **Role:** ${role}
+- **Purpose:** ${description}${styleHint}
+
+Apply all techniques from your training. Make the personality distinctive and the instructions actionable.`;
 
   const llmResponse = await fetch(`${preset.apiBase}/chat/completions`, {
     method: 'POST',
@@ -1216,9 +1273,12 @@ Generate ONLY the markdown content (no preamble, no code fences). Start with the
     },
     body: JSON.stringify({
       model: modelName,
-      messages: [{ role: 'user', content: prompt }],
-      max_completion_tokens: 2048,
-      temperature: 0.8,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_completion_tokens: 3072,
+      temperature: 0.7,
     }),
   });
 
@@ -1556,6 +1616,119 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         tokens,
       });
     }
+    case 'web_search': {
+      const query = args.query as string;
+      if (!query) return JSON.stringify({ error: 'query is required' });
+
+      // Try MiniMax Coding Plan Search first (~1s latency)
+      const minimaxKey = process.env.MINIMAX_API_KEY;
+      if (minimaxKey) {
+        try {
+          const searchResp = await fetch('https://api.minimax.io/v1/coding_plan/search', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${minimaxKey}`,
+              'MM-API-Source': 'PicoArmy',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ q: query }),
+          });
+
+          if (searchResp.ok) {
+            const searchData = await searchResp.json() as {
+              base_resp?: { status_code?: number };
+              organic?: Array<{ title?: string; snippet?: string; link?: string; date?: string }>;
+              related_searches?: Array<{ query?: string }>;
+            };
+
+            if (searchData.organic && searchData.organic.length > 0) {
+              const results = searchData.organic.slice(0, 8).map((r, i) => ({
+                rank: i + 1,
+                title: r.title || '',
+                snippet: r.snippet || '',
+                url: r.link || '',
+                date: r.date || '',
+              }));
+              const related = searchData.related_searches?.slice(0, 3).map(r => r.query) || [];
+              console.log(`[web_search] MiniMax returned ${results.length} results for "${query}"`);
+              return JSON.stringify({ source: 'minimax', query, results, related_searches: related });
+            }
+          }
+        } catch (e) {
+          console.error('[web_search] MiniMax search failed:', e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      // Fallback: GLM web_search tool (uses coding plan key, ~10s latency)
+      const glmKey = process.env.GLM_CODING_API_KEY || process.env.OPENAI_API_KEY;
+      const glmBase = process.env.GLM_CODING_API_BASE || 'https://api.z.ai/api/coding/paas/v4';
+      if (glmKey) {
+        try {
+          const glmResp = await fetch(`${glmBase}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${glmKey}`,
+            },
+            body: JSON.stringify({
+              model: process.env.GLM_CODING_MODEL || 'glm-4.7',
+              messages: [{ role: 'user', content: `Search for the latest information about: ${query}` }],
+              tools: [{ type: 'web_search', web_search: { enable: true } }],
+              max_tokens: 2048,
+            }),
+          });
+
+          if (glmResp.ok) {
+            const glmData = await glmResp.json() as {
+              choices?: Array<{ message?: { content?: string } }>;
+            };
+            const content = glmData.choices?.[0]?.message?.content || '';
+            if (content) {
+              console.log(`[web_search] GLM fallback returned ${content.length} chars for "${query}"`);
+              return JSON.stringify({ source: 'glm-web-search', query, content: content.slice(0, 8000) });
+            }
+          }
+        } catch (e) {
+          console.error('[web_search] GLM fallback failed:', e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      return JSON.stringify({ error: 'All search providers failed', query });
+    }
+    case 'mcp_call': {
+      const toolName = args.tool_name as string;
+      const toolArgs = (args.arguments as Record<string, unknown>) || {};
+
+      try {
+        const result = await mcpHub.callTool({
+          toolName,
+          arguments: toolArgs,
+          botName: 'commander',
+        });
+
+        // Extract text content from MCP result
+        const textParts = result.content
+          .filter(c => c.type === 'text' && c.text)
+          .map(c => c.text);
+        const combined = textParts.join('\n');
+
+        // Truncate large results to fit in tool response
+        if (combined.length > 10000) {
+          return JSON.stringify({ tool: toolName, result: combined.slice(0, 10000), truncated: true });
+        }
+        return JSON.stringify({ tool: toolName, result: combined });
+      } catch (e) {
+        return JSON.stringify({ error: e instanceof Error ? e.message : String(e), tool: toolName });
+      }
+    }
+    case 'mcp_list': {
+      const tools = mcpHub.listTools();
+      return JSON.stringify(tools.map(t => ({
+        name: t.name,
+        description: t.description.slice(0, 200),
+        server: t.server,
+      })));
+    }
     case 'soul_preview': {
       const desc = args.description as string;
       const roleStr = args.role as string;
@@ -1683,13 +1856,40 @@ You can also create ad-hoc multi-bot setups by spawning multiple bots with a sha
 You can send tasks directly to bots and get results using bot_task. This is how you make bots DO work:
 
 1. Deploy a swarm or spawn bots
-2. Use bot_task to send each bot their assignment
+2. Use bot_task to send each bot their SPECIFIC assignment
 3. Collect results from each bot
 4. Synthesize and present the combined output to the user
 
+## Web Search
+You have a built-in web_search tool for real-time information. Use it for news, research, current events.
+If web_search returns no results, use mcp_call with tool_name "search" (DuckDuckGo MCP) as fallback.
+
+## MCP Tools (Vision, Media, Search)
+Use mcp_list to see available tools. These include:
+- DuckDuckGo search (free, no API key) — tool: "search"
+- Image/video analysis via Z.AI vision tools
+- TTS, image/video generation via MiniMax (if connected)
+
+## Workflow — Research Tasks
+1. Use web_search to find current info on the topic
+2. Deploy bots (swarm or individual) with the right providers
+3. Use bot_task to send each bot their SPECIFIC assignment WITH the search results as context
+4. Chain results: analyst output → summarizer input
+5. Present the final synthesized report to the user
+
+CRITICAL RULES FOR bot_task:
+- Give SPECIFIC, detailed task prompts with CONTEXT — not vague ones
+- When you have web search results, INCLUDE them in the bot's task prompt
+- For the summarizer bot: ALWAYS pass the analyst's actual output in the task
+- Include what format you want: "Write a 300-word analysis covering X, Y, Z"
+
 Example workflow:
-- User: "Deploy the research team and research AI in healthcare"
-- You: swarm_deploy(research-team) → bot_task(research-team-analyst, "Research current state of AI in healthcare...") → bot_task(research-team-summarizer, "Summarize these findings: [analyst output]") → present final report
+- User: "Research AI in healthcare"
+- You: web_search({query: "AI healthcare 2025 latest developments"})
+  → swarm_deploy(research-team)
+  → bot_task(analyst, "Based on these search results: [web results here]. Write a detailed analysis...")
+  → bot_task(summarizer, "Summarize the following research: [analyst output here]")
+  → Present synthesized report to user
 
 IMPORTANT: When you deploy a swarm for a task, ALWAYS follow up with bot_task calls to give each bot their assignment. Don't just deploy and stop — the user wants RESULTS.
 
