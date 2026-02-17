@@ -37,8 +37,55 @@ services:
     networks:
       - picoarmy_net
 
+  # ── Commander (Dashboard + Fleet API + SSE) ──────────────────
+
+  commander:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: development
+      POSTGREST_URL: http://api:3000
+      POSTGRES_DB: ${POSTGRES_DB:-picoarmy}
+      POSTGRES_USER: ${POSTGRES_USER:-commander}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGRST_JWT_SECRET: ${PGRST_JWT_SECRET:-}
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      PICOBOT_MODEL: ${PICOBOT_MODEL:-glm-4.7-flash}
+      PICOBOT_BIN: ${PICOBOT_BIN:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_API_BASE: ${MINIMAX_API_BASE:-}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-}
+      MINIMAX_ANTHROPIC_BASE: ${MINIMAX_ANTHROPIC_BASE:-}
+      GLM_CODING_API_KEY: ${GLM_CODING_API_KEY:-}
+      GLM_CODING_API_BASE: ${GLM_CODING_API_BASE:-}
+      GLM_CODING_MODEL: ${GLM_CODING_MODEL:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_API_BASE: ${GROQ_API_BASE:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      COMMANDER_PROVIDER: ${COMMANDER_PROVIDER:-groq-scout}
+      COMMANDER_MODEL: ${COMMANDER_MODEL:-meta-llama/llama-4-scout-17b-16e-instruct}
+    volumes:
+      - ./src:/app/src
+      - ./souls:/app/souls
+      - ./swarms:/app/swarms
+      - ./skills:/app/skills
+      - ./mcp-servers.json:/app/mcp-servers.json
+      - bot_data:/data
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - picoarmy_net
+
 volumes:
   postgres_data:
+  bot_data:
 
 networks:
   picoarmy_net:

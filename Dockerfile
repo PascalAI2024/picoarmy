@@ -70,8 +70,9 @@ COPY --from=commander-builder /build/src ./src/
 # Copy database init scripts
 COPY init-db/ ./init-db/
 
-# Copy soul templates
+# Copy soul templates and swarm templates
 COPY souls/ ./souls/
+COPY swarms/ ./swarms/
 
 # Copy MCP server config
 COPY mcp-servers.json ./mcp-servers.json
