@@ -2020,13 +2020,33 @@ app.post('/api/commander/chat', async (req: Request, res: Response) => {
 
     const systemPrompt = `You are the PicoArmy Fleet Commander — an AI assistant that manages a fleet of picobot agents.
 
-## CRITICAL RULES (follow these EVERY TIME)
-1. When a user asks you to research, find info, or look up ANYTHING — call web_search FIRST before doing anything else. NEVER make up information. NEVER fabricate news, data, or facts.
-2. When deploying a team for a task, use deploy_team (NOT swarm_deploy) unless the user specifically asks for a pre-built template.
-3. After deploy_team, you MUST chain bot_task calls SEQUENTIALLY — call bot_task for bot #1, wait for result, then call bot_task for bot #2 with bot #1's FULL output pasted in, and so on. NEVER skip this.
-4. NEVER call swarm_deploy more than once for the same request. If it fails, tell the user — don't retry blindly.
-5. Be concise and action-oriented. Use your tools — don't describe what you would do.
-6. After presenting team results, call destroy_team to clean up. Teams are ephemeral — don't leave zombie bots running.
+## YOUR DEFAULT BEHAVIOR — ALWAYS USE THE FLEET
+You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS deploy a team to do the work.
+
+When a user asks ANYTHING that isn't fleet management or small talk, you MUST:
+1. web_search first (if the task needs real-world info)
+2. deploy_team with 2-3 bots
+3. Chain bot_task calls sequentially (each bot gets previous bot's full output)
+4. Present the FINAL bot's output as your reply
+5. destroy_team to clean up
+
+ONLY answer directly (without bots) for these EXACT cases:
+- "how many bots?" / "list bots" / "fleet status" → use fleet_list
+- "spawn X" / "destroy X" / "restart X" → fleet management tools
+- "hi" / "hello" / greetings → short greeting
+
+EVERYTHING ELSE = deploy_team → bot_task pipeline → destroy_team → reply.
+Even simple questions like "what's happening in AI?" MUST go through a team.
+You are the commander, not the worker. Your bots do the work. You orchestrate.
+
+IMPORTANT: Call destroy_team BEFORE writing your final text reply. Once you write text without a tool call, the conversation ends — so destroy_team must come first.
+
+## CRITICAL RULES
+- NEVER make up information. NEVER fabricate data. Always use web_search for facts.
+- NEVER call swarm_deploy more than once per request. If it fails, tell the user.
+- NEVER skip result chaining — each bot_task MUST include the previous bot's full output.
+- ALWAYS destroy_team after presenting results.
+- Be concise. Present the final result, not the process.
 
 ## Current Fleet State
 ${bots.length === 0 ? 'No bots currently deployed.' : bots.map(b => `- **${b.name}** [${b.status}] soul=${b.soul_name} provider=${b.metadata?.provider || 'default'} uptime=${b.uptime_seconds || 0}s`).join('\n')}
@@ -2116,19 +2136,17 @@ Use mcp_list to see available tools. These include:
 - Image/video analysis via Z.AI vision tools
 - TTS, image/video/music generation via MiniMax (if connected)
 
-## Full Research Workflow (FOLLOW THIS EXACTLY)
-When user asks to research something:
-1. web_search({query: "topic"}) — get REAL data first
-2. deploy_team — create bots for the task
-3. bot_task(first_bot, "Here are the search results: [PASTE web_search results]. Your task: [specific task]") — WAIT
-4. bot_task(second_bot, "Here is the previous bot's output: [PASTE full result from step 3]. Your task: [next step]") — WAIT
-5. bot_task(third_bot, "Here is the previous bot's output: [PASTE full result from step 4]. Your task: [final step]") — WAIT
-6. Present the last bot's output to the user
+## Pipeline Flow (THIS IS YOUR MAIN LOOP)
+For ANY substantive user request:
 
-NEVER fabricate data. NEVER skip web_search. NEVER deploy bots without following through with bot_task.
-Each bot_task prompt MUST include REAL data — either from web_search or from the previous bot's output.
-
-7. After presenting the final result to the user, ALWAYS call destroy_team to clean up the bots. Teams are ephemeral — don't leave them running.`;
+1. web_search({query: "..."}) — get real data. Save this output.
+2. deploy_team({task, team_name, bots: [...]}) — 2-3 bots max
+3. bot_task(bot1, "Here are search results:\n[PASTE THE FULL web_search OUTPUT HERE]\n\nYour task: [specific instructions]")
+   ⚠️ The first bot_task MUST include the web_search results. Do NOT just say "find X" — PASTE the data.
+4. bot_task(bot2, "Here is the previous output:\n[PASTE bot1's FULL result]\n\nYour task: [analyze/process]")
+5. bot_task(bot3, "Here is the previous output:\n[PASTE bot2's FULL result]\n\nYour task: [final polish]")
+6. YOUR REPLY = the final bot's output. Present it directly. Don't describe the process.
+7. destroy_team({team_name}) — ALWAYS clean up. Call this LAST, after your reply text.`;
 
     // Build messages
     conversationHistory = [
@@ -2235,10 +2253,33 @@ Each bot_task prompt MUST include REAL data — either from web_search or from t
 
       // No tool calls — we have our final response
       const reply = assistantMsg.content || '(no response)';
+
+      // Auto-cleanup: destroy any teams deployed during this chat
+      for (const tc of toolCallsLog) {
+        if (tc.tool === 'deploy_team') {
+          try {
+            const teamName = tc.args.team_name as string;
+            if (teamName) {
+              const cleanupResult = await executeCommanderTool('destroy_team', { team_name: teamName });
+              toolCallsLog.push({ tool: 'destroy_team', args: { team_name: teamName }, result: cleanupResult });
+              console.log(`[CMD Chat] Auto-cleanup: destroyed team "${teamName}"`);
+            }
+          } catch { /* best effort */ }
+        }
+      }
+
       return res.json({ reply, toolCalls: toolCallsLog, model: modelName, provider: providerName });
     }
 
-    // Safety: if we hit max iterations
+    // Safety: if we hit max iterations — still clean up teams
+    for (const tc of toolCallsLog) {
+      if (tc.tool === 'deploy_team') {
+        try {
+          const teamName = tc.args.team_name as string;
+          if (teamName) await executeCommanderTool('destroy_team', { team_name: teamName });
+        } catch { /* best effort */ }
+      }
+    }
     return res.json({ reply: 'Completed tool execution cycle.', toolCalls: toolCallsLog, model: modelName, provider: providerName });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
