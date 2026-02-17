@@ -1982,7 +1982,8 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
 
         // Generate soul for this role — skip expensive generation, use direct instructions
         // Soul generation adds latency and doesn't improve quality for pipeline bots
-        const soulContent = `You are a ${botDef.role}. ${botDef.task}\n\nYou are part of a swarm pipeline working on: ${task}\n\nRULES:\n- ONLY state facts that appear in the provided source data.\n- NEVER fabricate, invent, or guess information.\n- If the source data is insufficient, say so clearly.\n- Be concise and factual.`;
+        const today = new Date().toISOString().split('T')[0];
+        const soulContent = `You are a ${botDef.role}. ${botDef.task}\n\nToday's date: ${today}\nYou are part of a swarm pipeline working on: ${task}\n\nRULES:\n- ONLY use information from the source data provided. The source data is CURRENT and from the web.\n- NEVER use your training data for facts, dates, events, or statistics. Your training data is OUTDATED.\n- If the source data does not contain certain information, say "not available in source data" — NEVER fill gaps from memory.\n- All dates, scores, names, and facts MUST come from the source data.\n- Be concise and factual.`;
 
         // Build the prompt with grounding instructions
         const groundingRule = context
@@ -2122,7 +2123,16 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
             return null;
           }
 
-          const systemContent = `You are a critical thinking assistant. Provide a thoughtful, well-reasoned response to the user's query. If you are refining previous responses, identify strengths and weaknesses, then synthesize an improved answer.`;
+          const today = new Date().toISOString().split('T')[0]; // e.g. 2026-02-17
+          const systemContent = `You are a critical thinking assistant. Today's date is ${today}.
+
+CRITICAL RULES:
+- ONLY use information from the Source Data provided in the user message. The source data contains REAL, CURRENT information from the web.
+- NEVER use your training data for facts, dates, events, or statistics. Your training data is OUTDATED.
+- If the source data does not contain certain information, say "not available in source data" — NEVER fill gaps from memory.
+- All dates, scores, names, and facts MUST come from the source data, not your pre-training.
+- Provide a thoughtful, well-reasoned response based SOLELY on the provided source data.
+- If refining previous responses, identify strengths and weaknesses, then synthesize an improved answer.`;
 
           try {
             const llmResp = await fetch(`${preset.apiBase}/chat/completions`, {
@@ -2192,8 +2202,9 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
         return JSON.stringify({ error: `Aggregator provider "${aggregatorProvider}" not configured`, layers: allLayerResponses });
       }
 
-      // MoA paper aggregator prompt
-      const aggregatorSystemPrompt = `You have been provided with a set of responses from various open-source models to the latest user query. Your task is to synthesize these responses into a single, high-quality response. It is crucial to critically evaluate the information provided in these responses, recognizing that some of it may be biased or incorrect. Your response should not simply replicate the given answers but should offer a refined, accurate, and comprehensive reply to the instruction. Ensure your response is well-structured, coherent, and adheres to the highest standards of accuracy and reliability.`;
+      // MoA paper aggregator prompt — enhanced with grounding
+      const aggToday = new Date().toISOString().split('T')[0];
+      const aggregatorSystemPrompt = `Today's date: ${aggToday}. You have been provided with a set of responses from various models to the latest user query. Your task is to synthesize these responses into a single, high-quality response. Critically evaluate the information — some may be biased, incorrect, or drawn from outdated training data rather than the provided source data. Prefer facts that trace back to the Original Source Data over claims that appear fabricated. Your response should be refined, accurate, and comprehensive. Ensure it is well-structured, coherent, and uses ONLY information that can be verified against the source data provided.`;
 
       const responsesForAggregator = finalLayerResponses
         .map((r, idx) => `### Response ${idx + 1} (${r.provider})\n${r.output}`)
@@ -2380,7 +2391,9 @@ app.post('/api/commander/chat', async (req: Request, res: Response) => {
       }).filter(Boolean).join(', ') || 'none';
     })();
 
+    const today = new Date().toISOString().split('T')[0]; // e.g. 2026-02-17
     const systemPrompt = `You are the PicoArmy Fleet Commander — an AI assistant that manages a fleet of picobot agents.
+Today's date: ${today}. When users say "recent" or "latest", they mean ${today} — NOT your training data. Always search for current information.
 
 ## YOUR DEFAULT BEHAVIOR — ALWAYS USE THE SWARM
 You are a FLEET COMMANDER. You NEVER answer questions yourself. You ALWAYS run a swarm to do the work.
