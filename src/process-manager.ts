@@ -322,6 +322,17 @@ export class ProcessManager extends EventEmitter {
     };
 
     try {
+      // Check if picobot binary exists before spawning
+      if (!fs.existsSync(PICOBOT_BIN)) {
+        const errMsg = `Picobot binary not found at ${PICOBOT_BIN}`;
+        console.warn(`[PM] ${errMsg} — bot "${bot.name}" marked as error (dev mode)`);
+        bot.status = 'crashed';
+        bot.process = null;
+        bot.pid = null;
+        this.emit('bot:error', { botName: bot.name, error: errMsg });
+        return;
+      }
+
       const child = spawn(PICOBOT_BIN, ['gateway'], {
         cwd: bot.config.workspaceDir,
         env,
@@ -389,12 +400,19 @@ export class ProcessManager extends EventEmitter {
       });
 
       child.on('error', (err) => {
-        console.error(`[PM] Failed to start "${bot.name}":`, err.message);
+        const message = err.message || String(err);
+        console.error(`[PM] Failed to start "${bot.name}":`, message);
+
+        // Special handling for ENOENT (binary not found)
+        if (message.includes('ENOENT')) {
+          console.warn(`[PM] Picobot binary not found (${PICOBOT_BIN}) — bot "${bot.name}" marked as error`);
+        }
+
         bot.status = 'crashed';
         bot.process = null;
         bot.pid = null;
         this.clearPid(bot.name);
-        this.emit('bot:error', { botName: bot.name, error: err.message });
+        this.emit('bot:error', { botName: bot.name, error: message });
       });
     } catch (err) {
       bot.status = 'crashed';

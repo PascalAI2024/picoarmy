@@ -118,17 +118,26 @@ app.post('/api/fleet', async (req: Request, res: Response) => {
     // Create DB record (with provider/model in metadata for dashboard visibility)
     const preset = provider ? resolveProvider(provider) : undefined;
     const effectiveModel = model || preset?.model || process.env.PICOBOT_MODEL || 'glm-4.7-flash';
-    const dbBot = await apiClient.createBot({
-      name,
-      soul_name,
-      is_permanent: is_permanent !== undefined ? is_permanent : true,
-      ttl_seconds,
-      client_id,
-      metadata: {
-        ...(provider ? { provider } : {}),
-        model: effectiveModel,
-      },
-    });
+    let dbBot;
+    try {
+      dbBot = await apiClient.createBot({
+        name,
+        soul_name,
+        is_permanent: is_permanent !== undefined ? is_permanent : true,
+        ttl_seconds,
+        client_id,
+        metadata: {
+          ...(provider ? { provider } : {}),
+          model: effectiveModel,
+        },
+      });
+    } catch (createErr: unknown) {
+      const message = createErr instanceof Error ? createErr.message : String(createErr);
+      if (message.includes('409') || message.includes('duplicate') || message.includes('unique')) {
+        return res.status(409).json({ error: `Bot name "${name}" already exists` });
+      }
+      throw createErr;
+    }
 
     // Spawn actual process (if picobot binary available)
     const config: BotConfig = {
@@ -156,8 +165,9 @@ app.post('/api/fleet', async (req: Request, res: Response) => {
     broadcastSSE('fleet:spawn', dbBot);
     res.status(201).json(dbBot);
   } catch (error) {
-    console.error('Error creating bot:', error);
-    res.status(500).json({ error: 'Failed to create bot' });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[POST /api/fleet] Error creating bot:', message);
+    res.status(500).json({ error: 'Failed to create bot', detail: message.slice(0, 200) });
   }
 });
 
@@ -1090,12 +1100,141 @@ const commanderTools = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'soul_create',
+      description: 'AI-generate a professional soul template and save it to souls/ directory',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Soul template name (alphanumeric + hyphens, e.g. legal-advisor)' },
+          description: { type: 'string', description: 'What the bot does (e.g. "Provides legal advice for startups")' },
+          role: { type: 'string', description: 'Role/profession (e.g. "legal advisor", "data analyst", "fitness coach")' },
+          style: { type: 'string', description: 'Communication style (e.g. "professional", "casual", "technical", "friendly")' },
+        },
+        required: ['name', 'description', 'role'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'soul_preview',
+      description: 'AI-generate a soul template preview without saving (for user review)',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string', description: 'What the bot does (e.g. "Provides legal advice for startups")' },
+          role: { type: 'string', description: 'Role/profession (e.g. "legal advisor", "data analyst", "fitness coach")' },
+          style: { type: 'string', description: 'Communication style (e.g. "professional", "casual", "technical", "friendly")' },
+        },
+        required: ['description', 'role'],
+      },
+    },
+  },
 ];
+
+// AI-generate a soul template using Commander's LLM
+async function generateSoulContent(description: string, role: string, style?: string): Promise<string> {
+  const providerName = process.env.COMMANDER_PROVIDER || 'groq';
+  const modelName = process.env.COMMANDER_MODEL || 'llama-3.3-70b-versatile';
+  const preset = resolveProvider(providerName);
+
+  if (!preset) {
+    throw new Error(`Soul generation failed: Commander provider "${providerName}" not configured`);
+  }
+
+  const styleHint = style ? `Communication style: ${style}` : '';
+
+  const prompt = `You are an expert at crafting AI agent personalities. Generate a professional SOUL.md template for a picobot agent.
+
+**Requirements:**
+- Role: ${role}
+- Purpose: ${description}
+${styleHint ? `- ${styleHint}` : ''}
+
+**Output Format (Markdown):**
+
+# {Role Title}
+
+{1-2 sentence overview of what this bot does}
+
+## Personality
+
+- {trait 1}
+- {trait 2}
+- {trait 3}
+- {trait 4}
+
+## Core Skills
+
+- {skill 1}
+- {skill 2}
+- {skill 3}
+- {skill 4}
+- {skill 5}
+
+## Guidelines
+
+- {guideline 1 — specific, actionable rule}
+- {guideline 2}
+- {guideline 3}
+- {guideline 4}
+- {guideline 5}
+- {guideline 6}
+
+**Quality Standards:**
+- Personality traits should be specific and differentiated (not generic "helpful, friendly")
+- Core Skills must be concrete and relevant to the role
+- Guidelines should be actionable rules, not vague advice
+- Include anti-patterns or "never do X" rules where relevant
+- Use professional tone unless style specifies otherwise
+
+Generate ONLY the markdown content (no preamble, no code fences). Start with the # heading.`;
+
+  const llmResponse = await fetch(\`\${preset.apiBase}/chat/completions\`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': \`Bearer \${preset.apiKey}\`,
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: 'user', content: prompt }],
+      max_completion_tokens: 2048,
+      temperature: 0.8,
+    }),
+  });
+
+  if (!llmResponse.ok) {
+    const errorText = await llmResponse.text();
+    throw new Error(\`LLM error (\${llmResponse.status}): \${errorText.slice(0, 200)}\`);
+  }
+
+  const data = await llmResponse.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error('LLM returned empty response');
+  }
+
+  // Clean up any markdown code fences if the LLM ignored instructions
+  let cleaned = content.trim();
+  if (cleaned.startsWith('\`\`\`markdown') || cleaned.startsWith('\`\`\`')) {
+    cleaned = cleaned.replace(/^\`\`\`(?:markdown)?\n/, '').replace(/\n\`\`\`$/, '');
+  }
+
+  return cleaned.trim();
+}
 
 // Execute a commander tool call
 async function executeCommanderTool(name: string, args: Record<string, unknown>): Promise<string> {
-  switch (name) {
-    case 'fleet_list': {
+  try {
+    switch (name) {
+      case 'fleet_list': {
       const bots = await getEnrichedBots();
       return JSON.stringify(bots.map(b => ({
         id: b.id, name: b.name, status: b.status, soul: b.soul_name,
@@ -1252,6 +1391,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
 
       const template = JSON.parse(fs.readFileSync(swarmPath, 'utf-8'));
       const results: Array<{ name: string; role: string; soul: string; provider: string; status: string }> = [];
+      const createdBotIds: string[] = [];
 
       for (const bot of template.bots) {
         const botName = `${prefix}-${bot.role}`;
@@ -1265,6 +1405,7 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
             ...(clientId ? { client_id: clientId } : {}),
             metadata: { provider: bot.provider, model: preset?.model || 'glm-4.7-flash', swarm: swarmName, role: bot.role },
           });
+          createdBotIds.push(dbBot.id);
 
           const botConfig: BotConfig = {
             name: botName,
@@ -1285,7 +1426,24 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
           results.push({ name: botName, role: bot.role, soul: soulName, provider: bot.provider, status: 'spawned' });
           broadcastSSE('fleet:spawn', dbBot);
         } catch (e) {
-          results.push({ name: botName, role: bot.role, soul: soulName, provider: bot.provider, status: `error: ${e instanceof Error ? e.message : String(e)}` });
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          console.error(`[swarm_deploy] Failed to spawn ${botName}:`, errorMsg);
+          results.push({ name: botName, role: bot.role, soul: soulName, provider: bot.provider, status: `error: ${errorMsg}` });
+
+          // Rollback: delete all successfully created bots
+          console.warn(`[swarm_deploy] Rolling back swarm "${swarmName}" due to error`);
+          for (const id of createdBotIds) {
+            try {
+              const existingBot = await apiClient.getBot(id);
+              if (existingBot) {
+                try { await processManager.destroyBot(existingBot.name); } catch { /* ok */ }
+                await apiClient.deleteBot(id);
+              }
+            } catch (rollbackErr) {
+              console.error(`[swarm_deploy] Rollback failed for bot ${id}:`, rollbackErr);
+            }
+          }
+          return JSON.stringify({ error: `Swarm deployment failed: ${errorMsg}`, partialResults: results });
         }
       }
       return JSON.stringify({ swarm: swarmName, prefix, bots: results });
@@ -1309,13 +1467,19 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
       return JSON.stringify({ prefix, destroyed, count: destroyed.length });
     }
-    default:
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[executeCommanderTool] Error in ${name}:`, message);
+    return JSON.stringify({ error: `Tool execution failed: ${message}` });
   }
 }
 
 // POST /api/commander/chat — Meta chat with fleet management tools
 app.post('/api/commander/chat', async (req: Request, res: Response) => {
+  let conversationHistory: Array<{ role: string; content: string }> = [];
   try {
     const { message, history } = req.body;
     if (!message) return res.status(400).json({ error: 'message is required' });
@@ -1399,17 +1563,18 @@ You help the user manage their bot fleet through natural conversation. You can:
 Be concise and action-oriented. When the user asks to do something, use your tools to do it — don't just describe what you would do.`;
 
     // Build messages
-    const messages: Array<{ role: string; content: string }> = [
+    conversationHistory = [
       { role: 'system', content: systemPrompt },
     ];
     if (Array.isArray(history)) {
       for (const msg of history.slice(-20)) {
         if (msg.role && msg.content) {
-          messages.push({ role: msg.role, content: msg.content });
+          conversationHistory.push({ role: msg.role, content: msg.content });
         }
       }
     }
-    messages.push({ role: 'user', content: message });
+    conversationHistory.push({ role: 'user', content: message });
+    const messages = conversationHistory;
 
     // Tool execution loop (max 5 iterations)
     const toolCallsLog: Array<{ tool: string; args: Record<string, unknown>; result: string }> = [];
@@ -1438,8 +1603,12 @@ Be concise and action-oriented. When the user asks to do something, use your too
 
       if (!llmResponse.ok) {
         const errorText = await llmResponse.text();
-        console.error(`[CMD Chat] LLM error (${llmResponse.status}):`, errorText);
-        return res.status(502).json({ error: `LLM provider returned ${llmResponse.status}`, detail: errorText.slice(0, 200) });
+        console.error(`[CMD Chat] LLM error (${llmResponse.status}):`, errorText.slice(0, 200));
+        return res.status(502).json({
+          error: `LLM provider returned ${llmResponse.status}`,
+          detail: errorText.slice(0, 200),
+          provider: providerName,
+        });
       }
 
       const data = await llmResponse.json() as {
@@ -1489,8 +1658,19 @@ Be concise and action-oriented. When the user asks to do something, use your too
     // Safety: if we hit max iterations
     return res.json({ reply: 'Completed tool execution cycle.', toolCalls: toolCallsLog, model: modelName, provider: providerName });
   } catch (error) {
-    console.error('[CMD Chat] Error:', error);
-    res.status(500).json({ error: 'Commander chat failed' });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[CMD Chat] Error:', message);
+
+    // Return partial conversation if available
+    if (conversationHistory.length > 0) {
+      return res.status(500).json({
+        error: 'Commander chat failed',
+        detail: message.slice(0, 200),
+        partialHistory: conversationHistory.slice(-5),
+      });
+    }
+
+    res.status(500).json({ error: 'Commander chat failed', detail: message.slice(0, 200) });
   }
 });
 

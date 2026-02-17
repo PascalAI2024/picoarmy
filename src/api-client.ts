@@ -121,7 +121,10 @@ export async function getBots(): Promise<Bot[]> {
     const response = await apiClient.get('/bots');
     return response.data.map(enrichBot);
   } catch (error) {
-    console.warn('PostgREST unavailable, using mock data:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] getBots failed:', message);
     return MOCK_BOTS.map(enrichBot);
   }
 }
@@ -132,7 +135,10 @@ export async function getBot(id: string): Promise<Bot | null> {
     if (response.data.length === 0) return null;
     return enrichBot(response.data[0]);
   } catch (error) {
-    console.warn('PostgREST unavailable, using mock data:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] getBot failed:', message);
     const mockBot = MOCK_BOTS.find((b) => b.id === id);
     return mockBot ? enrichBot(mockBot) : null;
   }
@@ -145,8 +151,19 @@ export async function createBot(data: CreateBotData): Promise<Bot> {
     });
     return enrichBot(response.data[0]);
   } catch (error) {
-    console.warn('PostgREST unavailable, returning mock bot:', error);
-    // Return mock created bot
+    // Re-throw with clean error message if it's a 409 conflict
+    if (axios.isAxiosError(error) && error.response?.status === 409) {
+      const err = new Error(`Duplicate bot name: ${data.name}`);
+      (err as Error & { status: number }).status = 409;
+      throw err;
+    }
+
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] createBot failed:', message);
+
+    // Return mock created bot in dev mode
     const mockBot: Bot = {
       id: `mock-${Date.now()}`,
       name: data.name,
@@ -168,7 +185,10 @@ export async function updateBot(id: string, data: Partial<Pick<Bot, 'soul_name' 
     });
     return response.data.length > 0 ? enrichBot(response.data[0]) : null;
   } catch (error) {
-    console.warn('PostgREST unavailable, update ignored:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] updateBot failed:', message);
     return null;
   }
 }
@@ -177,7 +197,10 @@ export async function deleteBot(id: string): Promise<void> {
   try {
     await apiClient.delete(`/bots?id=eq.${id}`);
   } catch (error) {
-    console.warn('PostgREST unavailable, delete ignored:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] deleteBot failed:', message);
   }
 }
 
@@ -192,7 +215,10 @@ export async function getTelemetry(
     );
     return response.data;
   } catch (error) {
-    console.warn('PostgREST unavailable, returning mock telemetry:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] getTelemetry failed:', message);
     // Return mock telemetry
     return [
       {
@@ -241,7 +267,10 @@ export async function getGlobalLogs(
     });
     return response.data;
   } catch (error) {
-    console.warn('PostgREST unavailable, returning mock global logs:', error);
+    const message = axios.isAxiosError(error)
+      ? `PostgREST error: ${error.response?.status || 'network'} - ${error.message}`
+      : String(error);
+    console.warn('[api-client] getGlobalLogs failed:', message);
     // Return mock global logs
     return [
       {
