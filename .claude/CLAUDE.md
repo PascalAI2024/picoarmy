@@ -119,20 +119,28 @@ The `/api/commander/chat` endpoint is the meta AI orchestrator. It uses an LLM (
 | `fleet_list` | List all bots with status |
 | `fleet_spawn` | Spawn a permanent bot |
 | `fleet_destroy` | Destroy a bot |
-| `bot_task` | Send a task to a specific bot and get result |
 | `swarm_task` | Run a full swarm pipeline (primary tool) |
+| `deploy_team` | Deploy custom persistent team with AI-generated souls |
 | `swarm_deploy` | Deploy pre-built swarm template |
 | `swarm_destroy` | Destroy a swarm by prefix |
-| `web_search` | Real-time web search (MiniMax + GLM fallback) |
+| `web_search` | Real-time web search (Z.AI primary, MiniMax fallback) |
+| `fetch_url` | Fetch full page content (Z.AI webReader + raw HTTP fallback) |
 | `mcp_list` | List available MCP tools |
 | `mcp_call` | Call an MCP tool |
 | `soul_generate` | AI-generate a soul template |
 
 **Swarm Pipeline (`swarm_task`)** — the primary tool for any substantive task:
-1. Commander LLM calls `web_search` to get real data
-2. Commander calls `swarm_task` with context + bot pipeline definition
-3. `swarm_task` generates AI souls per role, chains LLM calls sequentially (each bot gets previous bot's output), returns final result
-4. No processes spawned, no DB records, no cleanup needed — pure LLM orchestration
+1. Commander LLM calls `web_search` to get real data (Z.AI primary, MiniMax fallback)
+2. Commander calls `fetch_url` on 1-2 of the most relevant URLs to get full page content
+3. Commander calls `swarm_task` with fetched content as context + bot pipeline definition
+4. `swarm_task` chains LLM calls sequentially with grounding rules (each bot gets previous bot's output + original source data), returns final result
+5. No processes spawned, no DB records, no cleanup needed — pure LLM orchestration
+
+**Custom Teams (`deploy_team`)** — persistent bot teams:
+1. Commander LLM designs team composition (roles, providers, styles) based on user's task
+2. `deploy_team` generates AI-powered souls for each role, spawns all bots as live processes
+3. Bots persist with Telegram access, own workspaces, and are manageable via fleet API
+4. Use `swarm_destroy` with team name prefix to clean up
 
 **Soul Generation** — `generateSoulContent()` uses 8 proven prompting techniques: role anchoring, behavioral constraints, few-shot tone calibration, chain-of-thought directives, tool-aware instructions, memory protocol, escalation rules, anti-patterns.
 
@@ -301,6 +309,8 @@ Commander acts as the universal MCP client for the fleet. Bots don't connect to 
 | Server | Transport | Tools | Scope |
 |--------|-----------|-------|-------|
 | Z.AI | stdio (npx) | 8 vision/web/GitHub tools | shared |
+| Z.AI Web Reader | HTTP | 1 full-page content fetcher | shared |
+| Z.AI Web Search | HTTP | 1 web search with rich snippets | shared |
 | MiniMax | stdio (uvx) | 9 TTS/video/image/music tools | shared |
 
 **Scope guard:** Tools scoped `"shared"` are available to all bots. Tools scoped `"client:<id>"` are restricted to bots with matching `client_id`.

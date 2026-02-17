@@ -117,6 +117,56 @@
 - [ ] Ephemeral bot TTL expiry warnings
 - [ ] Fleet-wide health summary (daily digest)
 
+## Phase 4: Swarm Intelligence (Research-Backed)
+
+Based on MoA (ICLR 2025), Agent Forest, and multi-agent debate papers.
+
+### 4.1 Swarm Modes (Commander Tools)
+- [x] `swarm_task` — Sequential pipeline (researcher → analyst → writer)
+- [x] `deploy_team` — Persistent custom teams with AI-generated souls
+- [x] `swarm_deploy` / `swarm_destroy` — Pre-built template deployment
+- [ ] `swarm_moa` — Mixture-of-Agents mode (N proposers → 1 aggregator, L layers)
+- [ ] `swarm_vote` — Agent Forest voting mode (N agents, majority vote)
+- [ ] `swarm_debate` — Multi-agent debate (N agents, R rounds of deliberation)
+
+### 4.2 Mixture-of-Agents (MoA-Lite)
+Key findings from research:
+- 6 proposers × 3 layers + 1 aggregator = 65.1% AlpacaEval (vs GPT-4o 57.5%)
+- **Collaborativeness**: models improve when given peer responses, even from weaker models
+- Proposers run in parallel within each layer (cost = max, not sum)
+- Same model with varied sampling (temp=0.7-0.9) works — diversity from stochasticity
+- Aggregator prompt is critical: "critically evaluate", not blindly combine
+- MoA-Lite (2 layers) = 30-40% cheaper, ~5-8% quality drop
+- Rate limit strategy: spread across Groq models (scout/maverick/kimi/qwen)
+
+Implementation plan:
+- [ ] `swarm_moa` tool: `{task, proposer_count, layers, aggregator_provider}`
+- [ ] Parallel proposer execution with rate limit queue
+- [ ] Aggregator prompt from Together AI's reference implementation
+- [ ] SSE events for each layer completion
+
+### 4.3 Voting & Self-Consistency
+Key findings:
+- Optimal: 5-15 agents, diminishing returns after 15
+- Self-consistency: generate N responses → majority vote (5-10 samples sweet spot)
+- Cost-effective for factual/deterministic tasks
+- [ ] `swarm_vote` tool: `{task, voter_count, providers[]}`
+
+### 4.4 Multi-Agent Debate
+Key findings:
+- 3 agents, 2-3 rounds optimal (6× cost for 10-15% accuracy gain)
+- Generator-critic loops: generate → critique → refine (2-3 iterations)
+- Best for reasoning, math, logic tasks
+- [ ] `swarm_debate` tool: `{task, agent_count, rounds}`
+
+### 4.5 Task-Type Router
+- [ ] Auto-select swarm mode based on task type:
+  - Factual queries → vote (quick, accurate)
+  - Creative/writing → moa (diverse, synthesized)
+  - Reasoning/math → debate (rigorous, verified)
+  - Research → pipeline (sequential, deep)
+  - Simple tasks → single bot (no swarm needed)
+
 ## Status
 
 | Phase | Status | Priority |
@@ -125,10 +175,15 @@
 | 1.2 Dockerfile | Not started | P0 |
 | 1.3 Process Manager | **Done** — spawn, health, TTL, PID, tool polling | P0 |
 | 1.4 Commander | **Done** — API, SSE, settings, providers | P0 |
-| 1.5 MCP Hub | **Done** — 17 tools, scope guard, audit | P0 |
+| 1.5 MCP Hub | **Done** — 19 tools, scope guard, audit | P0 |
 | 1.6 Souls + Skills | Partially done (templates exist) | P1 |
 | 1.7 Knowledge Base | Not started | P2 |
-| 1.8 Pipelines | Not started | P2 |
+| 1.8 Pipelines | **Done** — swarm_task handles full pipelines | P0 |
 | 2.1 Web UI | **Mostly done** — needs soul editor, skill manager | P1 |
 | 2.2 Telegram Commander | Not started | P2 |
 | 3.x Automation | Backlog | P3 |
+| 4.1 Swarm Modes | **Partial** — pipeline + deploy_team done | P1 |
+| 4.2 MoA | Research done, implementation pending | P1 |
+| 4.3 Voting | Research done, implementation pending | P2 |
+| 4.4 Debate | Research done, implementation pending | P2 |
+| 4.5 Task Router | Not started | P2 |
