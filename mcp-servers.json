@@ -9,30 +9,6 @@
       "scope": "shared",
       "description": "Z.AI vision tools — UI analysis, OCR, error diagnosis, diagrams"
     },
-    "duckduckgo": {
-      "command": "npx",
-      "args": ["-y", "duckduckgo-mcp-server"],
-      "scope": "shared",
-      "description": "DuckDuckGo web search — free, no API key needed"
-    },
-    "web-search": {
-      "type": "http",
-      "url": "https://api.z.ai/api/mcp/web_search_prime/mcp",
-      "headers": {
-        "Authorization": "Bearer ${Z_AI_CONSOLE_KEY}"
-      },
-      "scope": "shared",
-      "description": "Z.AI web search — real-time web search (requires Z.AI console API key)"
-    },
-    "zread": {
-      "type": "http",
-      "url": "https://api.z.ai/api/mcp/zread/mcp",
-      "headers": {
-        "Authorization": "Bearer ${Z_AI_CONSOLE_KEY}"
-      },
-      "scope": "shared",
-      "description": "Z.AI GitHub reader — search docs, read files, explore repo structure"
-    },
     "minimax": {
       "command": "uvx",
       "args": ["minimax-mcp"],
