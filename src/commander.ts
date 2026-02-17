@@ -1214,6 +1214,20 @@ const commanderTools = [
       },
     },
   },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'destroy_team',
+      description: 'Destroy all bots belonging to a team by team name prefix. Use this AFTER presenting team results to the user to clean up ephemeral bots.',
+      parameters: {
+        type: 'object',
+        properties: {
+          team_name: { type: 'string', description: 'The team name prefix (e.g. "news-team"). All bots whose name starts with this prefix will be destroyed.' },
+        },
+        required: ['team_name'],
+      },
+    },
+  },
 ];
 
 // AI-generate a soul template using Commander's LLM
@@ -1605,6 +1619,15 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
 
       console.log(`[bot_task] Sending task to "${botName}" via ${botProvider || 'default'} (${model})`);
 
+      // Broadcast task start to dashboard
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`,
+        bot_name: botName,
+        level: 'info',
+        message: `📤 Task received (${task.slice(0, 80)}...)`,
+        timestamp: new Date().toISOString(),
+      });
+
       const taskResponse = await fetch(`${apiBase}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -1636,6 +1659,15 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       const tokens = taskData.usage?.total_tokens || 0;
 
       console.log(`[bot_task] "${botName}" responded (${tokens} tokens)`);
+
+      // Broadcast task result to dashboard
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`,
+        bot_name: botName,
+        level: 'info',
+        message: `📥 Response (${tokens} tokens): ${result.slice(0, 120)}...`,
+        timestamp: new Date().toISOString(),
+      });
 
       return JSON.stringify({
         bot: botName,
@@ -1896,11 +1928,49 @@ async function executeCommanderTool(name: string, args: Record<string, unknown>)
       }
 
       console.log(`[deploy_team] Team "${teamName}" deployed: ${deployed.map(d => d.name).join(', ')}`);
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`,
+        bot_name: teamName,
+        level: 'info',
+        message: `🚀 Team deployed: ${deployed.map(d => d.name).join(', ')}`,
+        timestamp: new Date().toISOString(),
+      });
       return JSON.stringify({
         team: teamName,
         task: task.slice(0, 200),
         bots: deployed,
       });
+    }
+    case 'destroy_team': {
+      const teamName = args.team_name as string;
+      if (!teamName) return JSON.stringify({ error: 'team_name is required' });
+
+      const dbBots = await apiClient.getBots();
+      const teamBots = dbBots.filter(b => b.name.startsWith(`${teamName}-`));
+
+      if (teamBots.length === 0) {
+        return JSON.stringify({ error: `No bots found with prefix "${teamName}-"` });
+      }
+
+      const destroyed: string[] = [];
+      for (const bot of teamBots) {
+        try {
+          processManager.destroyBot(bot.name);
+          await apiClient.deleteBot(bot.id);
+          destroyed.push(bot.name);
+        } catch { /* best effort */ }
+      }
+
+      console.log(`[destroy_team] Cleaned up team "${teamName}": ${destroyed.join(', ')}`);
+      broadcastSSE('log:entry', {
+        id: `log-${Date.now()}`,
+        bot_name: teamName,
+        level: 'info',
+        message: `🧹 Team destroyed: ${destroyed.join(', ')}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return JSON.stringify({ team: teamName, destroyed, count: destroyed.length });
     }
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
@@ -1956,6 +2026,7 @@ app.post('/api/commander/chat', async (req: Request, res: Response) => {
 3. After deploy_team, you MUST chain bot_task calls SEQUENTIALLY — call bot_task for bot #1, wait for result, then call bot_task for bot #2 with bot #1's FULL output pasted in, and so on. NEVER skip this.
 4. NEVER call swarm_deploy more than once for the same request. If it fails, tell the user — don't retry blindly.
 5. Be concise and action-oriented. Use your tools — don't describe what you would do.
+6. After presenting team results, call destroy_team to clean up. Teams are ephemeral — don't leave zombie bots running.
 
 ## Current Fleet State
 ${bots.length === 0 ? 'No bots currently deployed.' : bots.map(b => `- **${b.name}** [${b.status}] soul=${b.soul_name} provider=${b.metadata?.provider || 'default'} uptime=${b.uptime_seconds || 0}s`).join('\n')}
@@ -2055,7 +2126,9 @@ When user asks to research something:
 6. Present the last bot's output to the user
 
 NEVER fabricate data. NEVER skip web_search. NEVER deploy bots without following through with bot_task.
-Each bot_task prompt MUST include REAL data — either from web_search or from the previous bot's output.`;
+Each bot_task prompt MUST include REAL data — either from web_search or from the previous bot's output.
+
+7. After presenting the final result to the user, ALWAYS call destroy_team to clean up the bots. Teams are ephemeral — don't leave them running.`;
 
     // Build messages
     conversationHistory = [
