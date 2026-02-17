@@ -9,16 +9,16 @@
 │  Commander (Node.js/Express)            :4000               │
 │  ├── Dashboard (Vite React)             /                   │
 │  ├── Fleet API                          /api/fleet          │
-│  ├── MCP Hub (17 tools)                 /api/tools          │
+│  ├── MCP Hub                            /api/tools          │
 │  ├── SSE Telemetry                      /api/sse            │
 │  └── Process Manager                                        │
 │       ├── mom-helper     (permanent, workspace: data/bots/) │
 │       ├── seo-acme       (permanent, client_id: acme)       │
 │       └── task-runner-1  (ephemeral, TTL=2h)                │
 ├─────────────────────────────────────────────────────────────┤
-│  MCP Servers (stdio)                                        │
-│  ├── Z.AI    → 8 tools  (vision, web search, GitHub)        │
-│  └── MiniMax → 9 tools  (TTS, video, image, music)          │
+│  MCP Servers (stdio, Coding Plan keys)                      │
+│  ├── Z.AI    (vision, web search, GitHub)                   │
+│  └── MiniMax (TTS, video, image generation)                 │
 ├─────────────────────────────────────────────────────────────┤
 │  PostgreSQL 15          :5432                                │
 │  ├── api.bots           (fleet registry + RLS)              │
@@ -54,10 +54,16 @@ PostgREST API is at `http://localhost:3000`. Commander API is at `http://localho
 | `POST` | `/api/fleet` | Spawn a new bot |
 | `DELETE` | `/api/fleet/:id` | Destroy a bot |
 | `PATCH` | `/api/fleet/:id/settings` | Update bot config (provider, model, client_id, telegram) |
-| `POST` | `/api/fleet/:id/soul` | Deploy soul template |
+| `POST` | `/api/fleet/:id/soul` | Deploy soul template (`{soul_name}`) or edit directly (`{content}`) |
+| `GET` | `/api/fleet/:id/soul` | Get bot's current soul content |
+| `POST` | `/api/fleet/:id/command` | Send command to bot via COMMANDS.md |
+| `GET` | `/api/fleet/:id/skills` | List skills deployed to a bot |
+| `POST` | `/api/fleet/:id/skills` | Deploy a skill to a bot |
+| `DELETE` | `/api/fleet/:id/skills/:name` | Remove skill from bot |
+| `GET` | `/api/skills` | List available skills library |
 | `GET` | `/api/souls` | List available soul templates |
 | `GET` | `/api/providers` | List configured LLM provider presets |
-| `GET` | `/api/tools` | List all MCP tools (filter: `?bot=name`) |
+| `GET` | `/api/tools` | List MCP tools (filter: `?bot=name`) |
 | `POST` | `/api/tools/:name/call` | Execute MCP tool (body: `{arguments, bot_name}`) |
 | `GET` | `/api/mcp/status` | MCP hub connection status |
 | `GET` | `/api/sse` | Server-Sent Events stream |
@@ -66,9 +72,9 @@ PostgREST API is at `http://localhost:3000`. Commander API is at `http://localho
 
 Commander acts as a universal MCP client hub. Bots request tools via `HEARTBEAT.md`, Commander proxies through connected MCP servers with scope enforcement.
 
-**Connected servers** (configured in `mcp-servers.json`):
-- **Z.AI** — 8 tools: vision analysis, web search, GitHub exploration (GLM-4.6V powered)
-- **MiniMax** — 9 tools: text-to-speech, video generation, image generation, music
+**Connected servers** (configured in `mcp-servers.json`, both use Coding Plan keys):
+- **Z.AI** (`@z_ai/mcp-server`) — Vision analysis, web search, GitHub exploration (GLM-4.6V powered). Uses `GLM_CODING_API_KEY`.
+- **MiniMax** (`minimax-mcp`) — Text-to-speech, video generation, image generation. Uses `MINIMAX_API_KEY` from Coding Plan.
 
 **Scope guard**: Tools scoped `"shared"` are available to all bots. Tools scoped `"client:<id>"` are restricted to bots with matching `client_id`.
 
@@ -95,12 +101,13 @@ Channels are separated to prevent race conditions between tool requests and comm
 
 ## LLM Provider Presets
 
-| Preset | Model | Format | Cost |
+All presets use Coding Plan subscriptions (flat monthly rate) — no pay-per-token billing.
+
+| Preset | Model | Format | Plan |
 |--------|-------|--------|------|
-| `glm-flash` | GLM-4.7-Flash | OpenAI | Free (unlimited) |
-| `glm-coding` | GLM-4.7 | OpenAI | Coding plan (~$3-15/mo) |
-| `glm` | GLM-4.7 | OpenAI | Pay-per-token |
-| `minimax` | MiniMax-M2.1 | OpenAI | Coding plan (~$10-50/mo) |
+| `glm-flash` | GLM-4.7-Flash | OpenAI | Coding Plan (free tier) |
+| `glm-coding` | GLM-4.7 | OpenAI | Coding Plan (~$3-15/mo) |
+| `minimax` | MiniMax-M2.1 | OpenAI | Coding Plan (~$10-50/mo) |
 | `minimax-anthropic` | MiniMax-M2.1 | Anthropic | Same key, Anthropic format |
 
 ## Tech Stack
