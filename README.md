@@ -1,6 +1,23 @@
-# PicoArmy Maximus: The Fleet Command Center
+# PicoArmy — Fleet Command Center
 
-> A PostgreSQL-first management layer for [louisho5/picobot](https://github.com/louisho5/picobot) fleets.
+> A PostgreSQL-first management layer for [louisho5/picobot](https://github.com/louisho5/picobot) fleets — spawn, scale, and orchestrate dozens of self-hosted AI agents from a single container.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6.svg)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791.svg)](https://www.postgresql.org/)
+[![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
+[![MCP](https://img.shields.io/badge/MCP-enabled-7c3aed.svg)](https://modelcontextprotocol.io/)
+
+PicoArmy turns a single Docker host into a command center for a fleet of [picobot](https://github.com/louisho5/picobot) agents — lightweight (~8MB) Go chatbots that speak any OpenAI-compatible API. Run always-on bots with fixed roles, burst ephemeral bots that auto-teardown, and orchestrate multi-agent **swarms** — all from one dashboard, with Postgres as the source of truth.
+
+## Features
+
+- **🤖 Fleet management** — Spawn, configure, and destroy picobot instances as child processes (no Docker-in-Docker). Scales to 50+ bots on ~500MB RAM.
+- **🧠 Swarm orchestration** — Chain specialized bots into grounded pipelines via the Commander meta-AI, with anti-hallucination guardrails.
+- **🗄️ PostgreSQL-first** — Business logic lives in SQL functions, triggers, and Row-Level Security. PostgREST auto-generates the REST API from your schema.
+- **🔌 Universal MCP hub** — Commander proxies Model Context Protocol tools to the fleet with per-client scope enforcement and full audit logging.
+- **📡 Real-time dashboard** — React 19 + SSE telemetry, live fleet health, command palette, and a dark terminal aesthetic.
+- **🎭 Souls & skills** — Versioned `SOUL.md` personalities and modular skill packages, deployable across the fleet (or AI-generated on demand).
 
 ## Architecture
 
@@ -33,14 +50,21 @@
 
 ## Getting Started
 
+**Prerequisites:** [Docker](https://www.docker.com/) + Docker Compose, [Node.js](https://nodejs.org/) 20+, and the [picobot](https://github.com/louisho5/picobot) binary on your `PATH` (only needed to actually run bots).
+
 ```bash
-# 1. Start the database
-docker compose up -d
+# 1. Configure environment
+cp .env.example .env        # then fill in POSTGRES_PASSWORD, JWT_SECRET, provider keys
 
-# 2. Start the Commander + Dashboard
-npm run dev
+# 2. Start the database + PostgREST
+docker compose up -d        # Postgres :5432, PostgREST :3000
 
-# 3. Open the dashboard
+# 3. Build the dashboard and start the Commander
+npm install
+npm run build:dashboard
+npm run dev                 # Commander serves the dashboard + API on :4000
+
+# 4. Open the dashboard
 open http://localhost:4000
 ```
 
@@ -181,13 +205,16 @@ Optional:
 - `POSTGRES_USER` (default: `commander`)
 - `PORT` (default: `4000`)
 
-### Dokploy Deployment
+The image is self-contained — point it at any Docker host (a plain `docker run`, Docker Swarm, or a PaaS such as [Dokploy](https://dokploy.com/) / Coolify with a reverse proxy to port `4000`). On startup, permanent bots auto-spawn from the DB registry.
 
-Deploy to Dokploy via GitHub webhook:
+## Contributing
 
-1. Create Dokploy application pointing to this repo
-2. Set environment variables in Dokploy (or GitHub Secrets)
-3. Push to trigger rebuild + redeploy
-4. Traefik routes domain to container port 4000
+Contributions are welcome. Please open an issue to discuss substantial changes first, then submit a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and conventions.
 
-**Post-deploy:** Permanent bots auto-spawn from DB registry on container startup.
+## Credits
+
+PicoArmy is a management layer for [**louisho5/picobot**](https://github.com/louisho5/picobot) — the lightweight Go AI chatbot it orchestrates. All credit for the agent runtime goes to the picobot project.
+
+## License
+
+[MIT](LICENSE) © Pascal Ledesma

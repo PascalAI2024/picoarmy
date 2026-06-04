@@ -21,7 +21,7 @@ WORKDIR /build
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install ALL dependencies (needed for ts-node/tsx at runtime)
+# Install ALL dependencies (needed for tsx at runtime)
 RUN npm ci
 
 # Copy source

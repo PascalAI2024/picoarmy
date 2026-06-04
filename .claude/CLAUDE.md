@@ -63,7 +63,7 @@ docker-compose up -d          # Postgres :5432, PostgREST :3000
 cd src/dashboard && npm run build && cd ../..
 
 # Start commander (serves dashboard + API on same origin)
-npx ts-node src/commander.ts  # http://localhost:4000
+npm run dev                   # http://localhost:4000
 
 # Dashboard served at :4000 (same origin as API — no CORS needed)
 # API at :4000/api/*
@@ -423,8 +423,7 @@ Two access modes per provider: **Regular API** (pay-per-token) and **Coding Plan
 ```
 picoarmy/
 ├── .claude/
-│   ├── CLAUDE.md               # This file
-│   └── PLAN.md                 # Development roadmap
+│   └── CLAUDE.md               # Architecture & conventions (this file)
 ├── .env                        # Environment config (not committed)
 ├── docker-compose.yml          # Dev: Postgres + PostgREST
 ├── mcp-servers.json            # MCP server config (servers, env vars, scopes)
@@ -458,10 +457,10 @@ picoarmy/
 └── tsconfig.json
 ```
 
-## Production: Dokploy Application
+## Production
 
-Single Dokploy app on Contabo VPS.
+Runs as a single Docker image on any host (plain `docker run`, Docker Swarm, or a PaaS such as Dokploy/Coolify behind a reverse proxy).
 - One Docker image, one container, one volume (`/data/`)
-- Traefik routes web UI
-- Deploy: push to GitHub → Dokploy webhook → rebuild + restart
-- Permanent bots auto-start on container boot from DB registry
+- Reverse proxy routes the web UI to container port `4000`
+- Deploy: build image → run with `POSTGRES_PASSWORD` + `JWT_SECRET` set
+- Permanent bots auto-start on container boot from the DB registry
