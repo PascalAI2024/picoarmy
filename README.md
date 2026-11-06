@@ -1,6 +1,6 @@
 # PicoArmy — Fleet Command Center
 
-> A PostgreSQL-first management layer for [louisho5/picobot](https://github.com/louisho5/picobot) fleets — spawn, scale, and orchestrate dozens of self-hosted AI agents from a single container.
+> A PostgreSQL-first management layer for [louisho5/picobot](https://github.com/louisho5/picobot) fleets — spawn and orchestrate self-hosted AI agents from a single container.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6.svg)](https://www.typescriptlang.org/)
@@ -8,16 +8,23 @@
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![MCP](https://img.shields.io/badge/MCP-enabled-7c3aed.svg)](https://modelcontextprotocol.io/)
 
-PicoArmy turns a single Docker host into a command center for a fleet of [picobot](https://github.com/louisho5/picobot) agents — lightweight (~8MB) Go chatbots that speak any OpenAI-compatible API. Run always-on bots with fixed roles, burst ephemeral bots that auto-teardown, and orchestrate multi-agent **swarms** — all from one dashboard, with Postgres as the source of truth.
+<p align="center">
+  <img src="docs/assets/picoarmy-dashboard.png" alt="PicoArmy fleet overview: three bots, two online and one offline, with filters and a Spawn Bot tile" width="900">
+  <br><em>Fleet overview from a local run on 2026-11-05. The three bots are the sample rows <code>init-db/01-schema.sql</code> inserts; no picobot workload was attached for the capture.</em>
+</p>
 
-## Features
+PicoArmy is a management layer for [picobot](https://github.com/louisho5/picobot), a small Go chatbot that speaks any OpenAI-compatible API. One Docker host runs a Node.js service, the Commander, that spawns bots as child processes, keeps the fleet registry in PostgreSQL, serves a React dashboard, and proxies Model Context Protocol tools to the bots. Postgres is the source of truth: fleet state, telemetry and the MCP audit log live in SQL tables with row-level security, and PostgREST exposes them as a REST API.
 
-- **🤖 Fleet management** — Spawn, configure, and destroy picobot instances as child processes (no Docker-in-Docker). Scales to 50+ bots on ~500MB RAM.
-- **🧠 Swarm orchestration** — Chain specialized bots into grounded pipelines via the Commander meta-AI, with anti-hallucination guardrails.
-- **🗄️ PostgreSQL-first** — Business logic lives in SQL functions, triggers, and Row-Level Security. PostgREST auto-generates the REST API from your schema.
-- **🔌 Universal MCP hub** — Commander proxies Model Context Protocol tools to the fleet with per-client scope enforcement and full audit logging.
-- **📡 Real-time dashboard** — React 19 + SSE telemetry, live fleet health, command palette, and a dark terminal aesthetic.
-- **🎭 Souls & skills** — Versioned `SOUL.md` personalities and modular skill packages, deployable across the fleet (or AI-generated on demand).
+**Status.** Working project, no releases. As of 2026-11-05 the stack builds and starts from `docker compose up -d` and serves the dashboard and fleet API (checked locally; see Getting Started). It has no automated test suite in the repository, and I have not measured how many bots a host can carry.
+
+## What it does
+
+- **Fleet management.** Spawn, configure and destroy picobot instances as child processes of the Commander, with no Docker-in-Docker. Permanent bots restart from the database registry; ephemeral bots tear down after a TTL.
+- **Swarms.** Chain specialised bots into pipelines through the Commander meta-agent.
+- **PostgreSQL first.** Business logic lives in SQL functions, triggers and row-level security. PostgREST generates the REST API from the `api` schema.
+- **MCP hub.** The Commander proxies MCP tools to the fleet with per-client scope enforcement and an audit log of every call.
+- **Dashboard.** React 19 with server-sent-event telemetry, fleet health, a command palette and a dark terminal look.
+- **Souls and skills.** Versioned `SOUL.md` personalities and skill packages, deployable to one bot or the whole fleet.
 
 ## Architecture
 
@@ -53,20 +60,18 @@ PicoArmy turns a single Docker host into a command center for a fleet of [picobo
 **Prerequisites:** [Docker](https://www.docker.com/) + Docker Compose, [Node.js](https://nodejs.org/) 20+, and the [picobot](https://github.com/louisho5/picobot) binary on your `PATH` (only needed to actually run bots).
 
 ```bash
-# 1. Configure environment
-cp .env.example .env        # then fill in POSTGRES_PASSWORD, JWT_SECRET, provider keys
+# 1. Configure environment: copy the template and set POSTGRES_PASSWORD
+#    (compose refuses to start without it); the rest is optional
+cp .env.example .env
 
-# 2. Start the database + PostgREST
-docker compose up -d        # Postgres :5432, PostgREST :3000
+# 2. Start Postgres, PostgREST and the Commander (dashboard included)
+docker compose up -d        # Postgres :5432, PostgREST :3000, Commander :4000
 
-# 3. Build the dashboard and start the Commander
-npm install
-npm run build:dashboard
-npm run dev                 # Commander serves the dashboard + API on :4000
-
-# 4. Open the dashboard
+# 3. Open the dashboard
 open http://localhost:4000
 ```
+
+I ran steps 1 and 2 on Windows with Docker Desktop on 2026-11-05. `GET /api/fleet` returned the three sample bots, the dashboard rendered as in the capture above, and `GET /api/mcp/status` reported the MCP servers as errored or disconnected because no provider keys were set. Running the Commander on the host instead (`npm install`, `npm run build:dashboard`, `npm run dev` against the compose database) is the development path; I did not run it for this update.
 
 PostgREST API is at `http://localhost:3000`. Commander API is at `http://localhost:4000/api`.
 
